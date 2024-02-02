@@ -1,0 +1,24 @@
+Function %Collection%(obj, coll)
+   '  Compute a list of objects from the object <obj>
+   ' and fill the collection <coll> with it
+
+   Dim MyModel
+   Set MyModel=ActiveModel
+
+   Dim t
+   For each t in MyModel.ExtendedObjects
+      If "Param" = t.Stereotype Then
+         Dim tbl
+         Set tbl = t.GetExtendedAttribute("Table")
+         
+         If not tbl is nothing Then
+            If obj.Name = tbl.Name Then
+               coll.Add(t)
+            End If
+         End If
+      End If
+   Next
+
+   %Collection% = True
+   
+End Function
