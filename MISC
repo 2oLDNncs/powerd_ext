@@ -38,15 +38,15 @@ public final class TransitiveClosure<V> implements Serializable {
 	}
 	
 	public final Collection<V> getTails(final V head) {
-		return this.headTails.get(head);
+		return this.headTails.getOrDefault(head, Collections.emptySet());
 	}
 	
 	public final Collection<V> getHeads(final V tail) {
-		return this.tailHeads.get(tail);
+		return this.tailHeads.getOrDefault(tail, Collections.emptySet());
 	}
 	
 	public final boolean isConnected(final V head, final V tail) {
-		return this.headTails.getOrDefault(head, Collections.emptySet()).contains(tail);
+		return this.getTails(head).contains(tail);
 	}
 	
 	public final Collection<V> getRoots() {
@@ -83,14 +83,11 @@ public final class TransitiveClosure<V> implements Serializable {
 	}
 	
 	private final void applyTransitivity(final V head, final V tail) {
-		this.forEachArc((h, t) -> {
-			if (tail.equals(h)) {
-				this.addArc(head, t);
-			}
-			
-			if (t.equals(head)) {
-				this.addArc(h, tail);
-			}
+		newList(this.getHeads(head)).forEach(h -> {
+			this.addArc(h, tail);
+		});
+		newList(this.getTails(tail)).forEach(t -> {
+			this.addArc(head, t);
 		});
 	}
 	
