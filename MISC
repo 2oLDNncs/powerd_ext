@@ -77,8 +77,9 @@ public final class TransitiveClosure<V> implements Serializable {
 		});
 	}
 	
-	private final boolean addArc(final V head, final V tail) {
-		return add(this.headTails, head, tail) | add(this.tailHeads, tail, head);
+	private final void addArc(final V head, final V tail) {
+		add(this.headTails, head, tail);
+		add(this.tailHeads, tail, head);
 	}
 	
 	private final void applyTransitivity(final V head, final V tail) {
