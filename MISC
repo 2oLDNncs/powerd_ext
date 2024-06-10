@@ -45,7 +45,7 @@ public final class TransitiveClosure<V> implements Serializable {
 		return this.tailHeads.getOrDefault(tail, Collections.emptySet());
 	}
 	
-	public final boolean isConnected(final V head, final V tail) {
+	public final boolean isArc(final V head, final V tail) {
 		return this.getTails(head).contains(tail);
 	}
 	
@@ -77,24 +77,33 @@ public final class TransitiveClosure<V> implements Serializable {
 		});
 	}
 	
-	private final void addArc(final V head, final V tail) {
-		add(this.headTails, head, tail);
-		add(this.tailHeads, tail, head);
+	private final boolean addArc(final V head, final V tail) {
+		return add(this.headTails, head, tail) | add(this.tailHeads, tail, head);
 	}
 	
 	private final void applyTransitivity(final V head, final V tail) {
-		newList(this.getHeads(head)).forEach(h -> {
-			this.addArc(h, tail);
+		final var predecessors = newList(this.getHeads(head));
+		final var successors = newList(this.getTails(tail));
+		
+		predecessors.forEach(p -> {
+			this.addArc(p, tail);
 		});
-		newList(this.getTails(tail)).forEach(t -> {
-			this.addArc(head, t);
+		
+		successors.forEach(s -> {
+			this.addArc(head, s);
+		});
+		
+		predecessors.forEach(p -> {
+			successors.forEach(s -> {
+				this.addArc(p, s);
+			});
 		});
 	}
 	
 	private static final long serialVersionUID = 7797977345376468869L;
 	
-	private static final <K, V> void add(final Map<K, Collection<V>> arcs, final K head, final V tail) {
-		arcs.computeIfAbsent(head, __ -> newSet()).add(tail);
+	private static final <K, V> boolean add(final Map<K, Collection<V>> arcs, final K head, final V tail) {
+		return arcs.computeIfAbsent(head, __ -> newSet()).add(tail);
 	}
 	
 	private static final <E> Collection<E> minus(final Collection<E> a, final Collection<E> b) {
