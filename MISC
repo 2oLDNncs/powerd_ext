@@ -119,20 +119,21 @@ public final class TransitiveClosure<V> implements Serializable {
 		return arcs.computeIfAbsent(head, __ -> newSet()).add(tail);
 	}
 	
-	private static final <E> Collection<E> plus(final Collection<E> a, final Collection<E> b) {
+	private static final <E> Collection<E> binop(final BiConsumer<Collection<E>, Collection<E>> op,
+			final Collection<E> a, final Collection<E> b) {
 		final var result = newSet(a);
 		
-		result.addAll(b);
+		op.accept(result, b);
 		
 		return result;
 	}
 	
+	private static final <E> Collection<E> plus(final Collection<E> a, final Collection<E> b) {
+		return binop(Collection::addAll, a, b);
+	}
+	
 	private static final <E> Collection<E> minus(final Collection<E> a, final Collection<E> b) {
-		final var result = newSet(a);
-		
-		result.removeAll(b);
-		
-		return result;
+		return binop(Collection::removeAll, a, b);
 	}
 	
 	private static final <E> Collection<E> newList(final Collection<E> source) {
