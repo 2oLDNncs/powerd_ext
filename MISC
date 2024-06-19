@@ -49,12 +49,24 @@ public final class TransitiveClosure<V> implements Serializable {
 		return this.getTails(head).contains(tail);
 	}
 	
+	public final Collection<V> getAllHeads() {
+		return this.headTails.keySet();
+	}
+	
+	public final Collection<V> getAllTails() {
+		return this.tailHeads.keySet();
+	}
+	
+	public final Collection<V> getVertices() {
+		return plus(this.getAllHeads(), this.getAllTails());
+	}
+	
 	public final Collection<V> getRoots() {
-		return minus(this.headTails.keySet(), this.tailHeads.keySet());
+		return minus(this.getAllHeads(), this.getAllTails());
 	}
 	
 	public final Collection<V> getLeaves() {
-		return minus(this.tailHeads.keySet(), this.headTails.keySet());
+		return minus(this.getAllTails(), this.getAllHeads());
 	}
 	
 	public final void forEachArc(final BiConsumer<V, V> action) {
@@ -105,6 +117,14 @@ public final class TransitiveClosure<V> implements Serializable {
 	
 	private static final <K, V> boolean add(final Map<K, Collection<V>> arcs, final K head, final V tail) {
 		return arcs.computeIfAbsent(head, __ -> newSet()).add(tail);
+	}
+	
+	private static final <E> Collection<E> plus(final Collection<E> a, final Collection<E> b) {
+		final var result = newSet(a);
+		
+		result.addAll(b);
+		
+		return result;
 	}
 	
 	private static final <E> Collection<E> minus(final Collection<E> a, final Collection<E> b) {
