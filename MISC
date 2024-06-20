@@ -111,89 +111,11 @@ public final class OrientedGraph<V> implements Serializable {
 	}
 	
 	public final void forEachPathFrom(final V head, final Consumer<List<V>> action) {
-		final var path = OrientedGraph.<V>newList();
-		final var leaves = this.getLeaves();
-		
-		path.add(head);
-		
-		this.walkFrom(head, new Walker<V>() {
-			
-			@Override
-			public final void begin(final V vertex) {
-				if (path.contains(vertex)) {
-					throw new IllegalStateException(
-							String.format("Cycle detected : %s -> %s", path, vertex));
-				}
-				
-				path.add(vertex);
-			}
-			
-			@Override
-			public final void end() {
-				final var i = path.size() - 1;
-				final var e = path.get(i);
-				
-				if (leaves.contains(e)) {
-					action.accept(path);
-				}
-				
-				path.remove(i);
-			}
-			
-			private static final long serialVersionUID = -6817842935026693707L;
-			
-		});
+		this.new OutgoingPathFinder().forEachPath(head, action);
 	}
 	
 	public final void forEachPathTo(final V tail, final Consumer<List<V>> action) {
-		final var path = OrientedGraph.<V>newList();
-		final var roots = this.getRoots();
-		
-		path.add(tail);
-		
-		this.walkTo(tail, new Walker<V>() {
-			
-			@Override
-			public final void begin(final V vertex) {
-				if (path.contains(vertex)) {
-					throw new IllegalStateException(
-							String.format("Cycle detected : %s -> %s", vertex, path));
-				}
-				
-				path.add(0, vertex);
-			}
-			
-			@Override
-			public final void end() {
-				final var i = 0;
-				final var e = path.get(i);
-				
-				if (roots.contains(e)) {
-					action.accept(path);
-				}
-				
-				path.remove(i);
-			}
-			
-			private static final long serialVersionUID = 4874395443803361650L;
-			
-		});
-	}
-	
-	private final void walkFrom(final V head, final Walker<V> walker) {
-		this.getTails(head).forEach(tail -> {
-			walker.begin(tail);
-			this.walkFrom(tail, walker);
-			walker.end();
-		});
-	}
-	
-	private final void walkTo(final V tail, final Walker<V> walker) {
-		this.getHeads(tail).forEach(head -> {
-			walker.begin(head);
-			this.walkTo(head, walker);
-			walker.end();
-		});
+		this.new IncomingPathFinder().forEachPath(tail, action);
 	}
 	
 	private final void addArc(final V head, final V tail) {
@@ -218,6 +140,72 @@ public final class OrientedGraph<V> implements Serializable {
 				this.addArc(p, s);
 			});
 		});
+	}
+	
+	/**
+	 * @author 2oLDNncs 20240621
+	 */
+	private final class OutgoingPathFinder extends PathFinder<V> {
+		
+		public OutgoingPathFinder() {
+			super(OrientedGraph.this.getLeaves());
+		}
+		
+		@Override
+		protected final Object[] getCycleExceptionMessageArgs(final Object path, final Object vertex) {
+			return new Object[] { path, vertex };
+		}
+		
+		@Override
+		protected final Collection<V> getNextVertices(V origin) {
+			return OrientedGraph.this.getTails(origin);
+		}
+		
+		@Override
+		protected final int getInsertionIndex(final int pathSize) {
+			return pathSize;
+		}
+		
+		@Override
+		protected final int getRemovalIndex(final int pathSize) {
+			return pathSize - 1;
+		}
+		
+		private static final long serialVersionUID = -2004507300852730885L;
+		
+	}
+	
+	/**
+	 * @author 2oLDNncs 20240621
+	 */
+	private final class IncomingPathFinder extends PathFinder<V> {
+		
+		public IncomingPathFinder() {
+			super(OrientedGraph.this.getRoots());
+		}
+		
+		@Override
+		protected final Object[] getCycleExceptionMessageArgs(final Object path, final Object vertex) {
+			return new Object[] { vertex, path };
+		}
+		
+		@Override
+		protected final Collection<V> getNextVertices(V origin) {
+			return OrientedGraph.this.getHeads(origin);
+		}
+		
+		@Override
+		protected final int getInsertionIndex(final int pathSize) {
+			return 0;
+		}
+		
+		@Override
+		protected final int getRemovalIndex(final int pathSize) {
+			return 0;
+		}
+		
+		private static final long serialVersionUID = -1342815930328295026L;
+		
 	}
 	
 	private static final long serialVersionUID = 7797977345376468869L;
@@ -268,15 +256,60 @@ public final class OrientedGraph<V> implements Serializable {
 	}
 	
 	/**
-	 * @author 2oLDNncs 20240619
+	 * @author 2oLDNncs 20240621
 	 *
 	 * @param <V>
 	 */
-	private static abstract interface Walker<V> extends Serializable {
+	private static abstract class PathFinder<V> implements Serializable {
 		
-		public abstract void begin(V vertex);
+		private final List<V> path = newList();
 		
-		public abstract void end();
+		private final Collection<V> ends;
+		
+		protected PathFinder(final Collection<V> ends) {
+			this.ends = ends;
+		}
+		
+		public final void forEachPath(final V anchor, final Consumer<List<V>> action) {
+			this.begin(anchor);
+			
+			this.getNextVertices(anchor).forEach(v -> {
+				this.forEachPath(v, action);
+			});
+			
+			this.end(action);
+		}
+		
+		protected abstract Object[] getCycleExceptionMessageArgs(Object path, Object vertex);
+		
+		protected abstract Collection<V> getNextVertices(V origin);
+		
+		protected abstract int getInsertionIndex(int pathSize);
+		
+		protected abstract int getRemovalIndex(int pathSize);
+		
+		private final void begin(final V vertex) {
+			if (this.path.contains(vertex)) {
+				throw new IllegalStateException(
+						String.format("Cycle detected : %s -> %s",
+								this.getCycleExceptionMessageArgs(this.path, vertex)));
+			}
+			
+			this.path.add(this.getInsertionIndex(this.path.size()), vertex);
+		}
+		
+		private final void end(final Consumer<List<V>> action) {
+			final var i = this.getRemovalIndex(this.path.size());
+			final var e = this.path.get(i);
+			
+			if (this.ends.contains(e)) {
+				action.accept(this.path);
+			}
+			
+			this.path.remove(i);
+		}
+		
+		private static final long serialVersionUID = -2445477282075393002L;
 		
 	}
 	
