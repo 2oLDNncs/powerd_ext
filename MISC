@@ -25,16 +25,31 @@ End Function
 
 /**
  * @author 2oLDNncs 20240608
+ *
+ * @param <V>
  */
-public final class TransitiveClosure<V> implements Serializable {
+public final class OrientedGraph<V> implements Serializable {
 	
 	private final Map<V, Collection<V>> headTails = newMap();
 	
 	private final Map<V, Collection<V>> tailHeads = newMap();
 	
+	private final boolean transitive;
+	
+	public OrientedGraph(final boolean transitive) {
+		this.transitive = transitive;
+	}
+	
+	public final boolean isTransitive() {
+		return this.transitive;
+	}
+	
 	public final void connect(final V head, final V tail) {
 		this.addArc(head, tail);
-		this.applyTransitivity(head, tail);
+		
+		if (this.isTransitive()) {
+			this.applyTransitivity(head, tail);
+		}
 	}
 	
 	public final Collection<V> getTails(final V head) {
@@ -89,6 +104,98 @@ public final class TransitiveClosure<V> implements Serializable {
 		});
 	}
 	
+	public final void forEachMaxPath(final Consumer<List<V>> action) {
+		this.getRoots().forEach(root -> {
+			this.forEachPathFrom(root, action);
+		});
+	}
+	
+	public final void forEachPathFrom(final V head, final Consumer<List<V>> action) {
+		final var path = OrientedGraph.<V>newList();
+		final var leaves = this.getLeaves();
+		
+		path.add(head);
+		
+		this.walkFrom(head, new Walker<V>() {
+			
+			@Override
+			public final void begin(final V vertex) {
+				if (path.contains(vertex)) {
+					throw new IllegalStateException(
+							String.format("Cycle detected : %s -> %s", path, vertex));
+				}
+				
+				path.add(vertex);
+			}
+			
+			@Override
+			public final void end() {
+				final var i = path.size() - 1;
+				final var e = path.get(i);
+				
+				if (leaves.contains(e)) {
+					action.accept(path);
+				}
+				
+				path.remove(i);
+			}
+			
+			private static final long serialVersionUID = -6817842935026693707L;
+			
+		});
+	}
+	
+	public final void forEachPathTo(final V tail, final Consumer<List<V>> action) {
+		final var path = OrientedGraph.<V>newList();
+		final var roots = this.getRoots();
+		
+		path.add(tail);
+		
+		this.walkTo(tail, new Walker<V>() {
+			
+			@Override
+			public final void begin(final V vertex) {
+				if (path.contains(vertex)) {
+					throw new IllegalStateException(
+							String.format("Cycle detected : %s -> %s", vertex, path));
+				}
+				
+				path.add(0, vertex);
+			}
+			
+			@Override
+			public final void end() {
+				final var i = 0;
+				final var e = path.get(i);
+				
+				if (roots.contains(e)) {
+					action.accept(path);
+				}
+				
+				path.remove(i);
+			}
+			
+			private static final long serialVersionUID = 4874395443803361650L;
+			
+		});
+	}
+	
+	private final void walkFrom(final V head, final Walker<V> walker) {
+		this.getTails(head).forEach(tail -> {
+			walker.begin(tail);
+			this.walkFrom(tail, walker);
+			walker.end();
+		});
+	}
+	
+	private final void walkTo(final V tail, final Walker<V> walker) {
+		this.getHeads(tail).forEach(head -> {
+			walker.begin(head);
+			this.walkTo(head, walker);
+			walker.end();
+		});
+	}
+	
 	private final void addArc(final V head, final V tail) {
 		add(this.headTails, head, tail);
 		add(this.tailHeads, tail, head);
@@ -136,7 +243,11 @@ public final class TransitiveClosure<V> implements Serializable {
 		return binop(Collection::removeAll, a, b);
 	}
 	
-	private static final <E> Collection<E> newList(final Collection<E> source) {
+	private static final <E> List<E> newList() {
+		return new ArrayList<>();
+	}
+	
+	private static final <E> List<E> newList(final Collection<E> source) {
 		return new ArrayList<>(source);
 	}
 	
@@ -154,6 +265,19 @@ public final class TransitiveClosure<V> implements Serializable {
 	
 	private static final <E> Collection<E> newSet(final Collection<E> source) {
 		return new HashSet<>(source);
+	}
+	
+	/**
+	 * @author 2oLDNncs 20240619
+	 *
+	 * @param <V>
+	 */
+	private static abstract interface Walker<V> extends Serializable {
+		
+		public abstract void begin(V vertex);
+		
+		public abstract void end();
+		
 	}
 	
 }
