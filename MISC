@@ -314,3 +314,113 @@ public final class OrientedGraph<V> implements Serializable {
 	}
 	
 }
+
+function main(workbook: ExcelScript.Workbook) {
+	let selectedSheet = workbook.getActiveWorksheet();
+
+	selectedSheet.getShapes().forEach(shape => {
+		if ("{F9536926-BCBA-42FC-8F89-698BED5BE012}" != shape.getAltTextDescription()) {
+			shape.delete();
+		}
+	});
+
+	let heads = new Map<string, [string]>();
+	let tails = new Map<string, [string]>();
+
+	let usedRange = selectedSheet.getUsedRange();
+
+	console.log("usedRange");
+
+	for (let j = 1; j < usedRange.getRowCount(); j += 1) {
+		let rowTexts = usedRange.getRow(j).getTexts()[0];
+		let head = rowTexts[0];
+		let tail = rowTexts[1];
+
+		console.log(head + " -> " + tail);
+
+		if (heads.has(tail)) {
+			heads.get(tail).push(head);
+		} else {
+			heads.set(tail, [head]);
+		}
+		
+		if (tails.has(head)) {
+			tails.get(head).push(tail);
+		} else {
+			tails.set(head, [tail]);
+		}
+	}
+
+	console.log("heads");
+	console.log(heads);
+
+	console.log("tails");
+	console.log(tails);
+
+	let nodes = new Set<string>();
+
+	heads.forEach((hs, t) => {
+		nodes.add(t);
+	});
+
+	tails.forEach((ts, h) => {
+		nodes.add(h);
+	});
+
+	console.log("nodes");
+	console.log(nodes);
+
+	const depth = (node: string) => {
+		let result = 0;
+		let hs = new Set(heads.get(node) ?? []);
+
+		while (0 < hs.size) {
+			result += 1;
+
+			let tmp = new Set<string>();
+			hs.forEach(h => {
+				(heads.get(h) ?? []).forEach(e => {
+					tmp.add(e);
+				});
+			});
+			hs = tmp;
+		}
+
+		return result;
+	};
+
+	let offsets: number[] = [];
+	let nodeShapes = new Map < string, ExcelScript.Shape >();
+	let nodes_ = Array.from(nodes.values());
+
+// This needs to be a for loop because Excel seems to execute a forEach in non-sequential way
+	for (let i = 0; i < nodes.size; i += 1) {
+		const node = nodes_[i];
+		const d = depth(node);
+
+		while (offsets.length <= d) {
+			offsets.push(-1);
+		}
+
+		offsets[d] += 1;
+
+		let nodeShape = selectedSheet.addGeometricShape(ExcelScript.GeometricShapeType.rectangle);
+		nodeShape.setPlacement(ExcelScript.Placement.absolute);
+		nodeShape.setLeft(200 + d * 150);
+		nodeShape.setTop(100 + offsets[d] * 30);
+		nodeShape.getTextFrame().getTextRange().setText(node);
+		nodeShape.getTextFrame().setAutoSizeSetting(ExcelScript.ShapeAutoSize.autoSizeShapeToFitText);
+		nodeShapes.set(node, nodeShape);
+	}
+
+	for (let j = 1; j < usedRange.getRowCount(); j += 1) {
+		const rowTexts = usedRange.getRow(j).getTexts()[0];
+		const head = rowTexts[0];
+		const tail = rowTexts[1];
+		let headShape = nodeShapes.get(head);
+		let tailShape = nodeShapes.get(tail);
+		let line_13 = selectedSheet.addLine(0, 0, 100, 100).getLine();
+		line_13.connectBeginShape(headShape, 3);
+		line_13.connectEndShape(tailShape, 1);
+	}
+}
