@@ -30,9 +30,9 @@ End Function
  */
 public final class OrientedGraph<V> implements Serializable {
 	
-	private final Map<V, Collection<V>> headTails = newMap();
-	
 	private final Map<V, Collection<V>> tailHeads = newMap();
+	
+	private final Map<V, Collection<V>> headTails = newMap();
 	
 	private final boolean transitive;
 	
@@ -44,50 +44,50 @@ public final class OrientedGraph<V> implements Serializable {
 		return this.transitive;
 	}
 	
-	public final void connect(final V head, final V tail) {
-		this.addArc(head, tail);
+	public final void connect(final V tail, final V head) {
+		this.addArc(tail, head);
 		
 		if (this.isTransitive()) {
-			this.applyTransitivity(head, tail);
+			this.applyTransitivity(tail, head);
 		}
-	}
-	
-	public final Collection<V> getTails(final V head) {
-		return this.headTails.getOrDefault(head, Collections.emptySet());
 	}
 	
 	public final Collection<V> getHeads(final V tail) {
 		return this.tailHeads.getOrDefault(tail, Collections.emptySet());
 	}
 	
-	public final boolean isArc(final V head, final V tail) {
-		return this.getTails(head).contains(tail);
+	public final Collection<V> getTails(final V head) {
+		return this.headTails.getOrDefault(head, Collections.emptySet());
 	}
 	
-	public final Collection<V> getAllHeads() {
-		return this.headTails.keySet();
+	public final boolean isArc(final V tail, final V head) {
+		return this.getHeads(tail).contains(head);
 	}
 	
 	public final Collection<V> getAllTails() {
 		return this.tailHeads.keySet();
 	}
 	
+	public final Collection<V> getAllHeads() {
+		return this.headTails.keySet();
+	}
+	
 	public final Collection<V> getVertices() {
-		return plus(this.getAllHeads(), this.getAllTails());
+		return plus(this.getAllTails(), this.getAllHeads());
 	}
 	
 	public final Collection<V> getRoots() {
-		return minus(this.getAllHeads(), this.getAllTails());
-	}
-	
-	public final Collection<V> getLeaves() {
 		return minus(this.getAllTails(), this.getAllHeads());
 	}
 	
+	public final Collection<V> getLeaves() {
+		return minus(this.getAllHeads(), this.getAllTails());
+	}
+	
 	public final void forEachArc(final BiConsumer<V, V> action) {
-		newMap(this.headTails).forEach((head, tails) -> {
-			newList(tails).forEach(tail -> {
-				action.accept(head, tail);
+		newMap(this.tailHeads).forEach((tail, heads) -> {
+			newList(heads).forEach(head -> {
+				action.accept(tail, head);
 			});
 		});
 	}
@@ -96,7 +96,7 @@ public final class OrientedGraph<V> implements Serializable {
 		final var leaves = this.getLeaves();
 		
 		this.getRoots().forEach(root -> {
-			this.getTails(root).stream()
+			this.getHeads(root).stream()
 			.filter(leaves::contains)
 			.forEach(leaf -> {
 				action.accept(root, leaf);
@@ -118,21 +118,21 @@ public final class OrientedGraph<V> implements Serializable {
 		this.new IncomingPathFinder().forEachPath(tail, action);
 	}
 	
-	private final void addArc(final V head, final V tail) {
-		add(this.headTails, head, tail);
+	private final void addArc(final V tail, final V head) {
 		add(this.tailHeads, tail, head);
+		add(this.headTails, head, tail);
 	}
 	
-	private final void applyTransitivity(final V head, final V tail) {
-		final var predecessors = newList(this.getHeads(head));
-		final var successors = newList(this.getTails(tail));
+	private final void applyTransitivity(final V tail, final V head) {
+		final var predecessors = newList(this.getTails(tail));
+		final var successors = newList(this.getHeads(head));
 		
 		predecessors.forEach(p -> {
-			this.addArc(p, tail);
+			this.addArc(p, head);
 		});
 		
 		successors.forEach(s -> {
-			this.addArc(head, s);
+			this.addArc(tail, s);
 		});
 		
 		predecessors.forEach(p -> {
@@ -158,7 +158,7 @@ public final class OrientedGraph<V> implements Serializable {
 		
 		@Override
 		protected final Collection<V> getNextVertices(V origin) {
-			return OrientedGraph.this.getTails(origin);
+			return OrientedGraph.this.getHeads(origin);
 		}
 		
 		@Override
@@ -191,7 +191,7 @@ public final class OrientedGraph<V> implements Serializable {
 		
 		@Override
 		protected final Collection<V> getNextVertices(V origin) {
-			return OrientedGraph.this.getHeads(origin);
+			return OrientedGraph.this.getTails(origin);
 		}
 		
 		@Override
@@ -210,8 +210,8 @@ public final class OrientedGraph<V> implements Serializable {
 	
 	private static final long serialVersionUID = 7797977345376468869L;
 	
-	private static final <K, V> boolean add(final Map<K, Collection<V>> arcs, final K head, final V tail) {
-		return arcs.computeIfAbsent(head, __ -> newSet()).add(tail);
+	private static final <K, V> boolean add(final Map<K, Collection<V>> arcs, final K tail, final V head) {
+		return arcs.computeIfAbsent(tail, __ -> newSet()).add(head);
 	}
 	
 	private static final <E> Collection<E> binop(final BiConsumer<Collection<E>, Collection<E>> op,
@@ -311,6 +311,130 @@ public final class OrientedGraph<V> implements Serializable {
 		
 		private static final long serialVersionUID = -2445477282075393002L;
 		
+	}
+	
+}
+
+/**
+ * @author 2oLDNncs 20240804
+ */
+public final class GraphvizPrinter {
+	
+	private final PrintStream out;
+	
+	private final Map<List<String>, Integer> nodeIds = new LinkedHashMap<>();
+	private final Map<String, Object> clusters = new LinkedHashMap<>();
+	
+	private int expectedElementsLength = -1;
+	private int lineNumber = 1;
+	
+	public GraphvizPrinter(final PrintStream out) {
+		this.out = out;
+	}
+	
+	public final void begin() {
+		this.out.println("digraph G {");
+		this.out.println("	layout=dot // Use dot for clustering");
+		this.out.println("	compound=true // If true, allow edges between clusters");
+		this.out.println("	rankdir=TB // TB or LR");
+	}
+	
+	public final void process(final String... elements) {
+		if (0 != (elements.length & 1)) {
+			throw new IllegalArgumentException(String.format("Line %s: Odd number of elements", this.lineNumber));
+		}
+		
+		if (this.expectedElementsLength < 0) {
+			this.expectedElementsLength = elements.length;
+		}
+		
+		if (this.expectedElementsLength != elements.length) {
+			throw new IllegalArgumentException(String.format("Line %s: Wrong number of elements (expected: %s, actual: %s)",
+					this.lineNumber, this.expectedElementsLength, elements.length));
+		}
+		
+		final var tail = Arrays.asList(Arrays.copyOfRange(elements, 0, elements.length / 2));
+		final var head = Arrays.asList(Arrays.copyOfRange(elements, elements.length / 2, elements.length));
+		
+		this.updateNodeIds(tail);
+		this.updateNodeIds(head);
+		
+		this.updateClusters(tail);
+		this.updateClusters(head);
+		
+		final var tailId = this.nodeIds.get(tail);
+		final var headId = this.nodeIds.get(head);
+		
+		// It is possible to use ltail and lhead all the time
+		// When the node is an actual cluster node, Graphviz will clip the edges appropriately
+		// Otherwise, the nodes are connected as usual
+		this.out.println(String.format("	%s -> %s [ltail=cluster_%s,lhead=cluster_%s]",
+				tailId, headId, tailId, headId));
+		
+		this.lineNumber += 1;
+	}
+	
+	public final void end() {
+		final var node = new ArrayList<>(Collections.nCopies(this.expectedElementsLength / 2, FILLER));
+		
+		printClusters(this.clusters, node, 0, "\t");
+		
+		this.out.println("}");
+	}
+	
+	private final void updateNodeIds(final List<String> node) {
+		for (var i = 0; i < node.size(); i += 1) {
+			this.nodeIds.computeIfAbsent(keepLeft(node, i, FILLER), __ -> 1 + this.nodeIds.size());
+		}
+	}
+	
+	private final void printClusters(final Map<String, Object> clusters,
+			final List<String> node, final int i, final String indent) {
+		clusters.forEach((k, v) -> {
+			node.set(i, k);
+			final var nodeId = Objects.requireNonNull(this.nodeIds.get(node));
+			
+			if (i + 1 < node.size()) {
+				// Graphviz doc: Clusters are encoded as subgraphs whose names have the prefix 'cluster'.
+				System.out.println(String.format("%ssubgraph cluster_%s {", indent, nodeId));
+				System.out.println(String.format("%s	label=\"%s\"", indent, k));
+				
+				// This is a trick to get a node that can be used to connect to/from the whole cluster using ltail and lhead
+				// FIXME This invisible node actually gets positioned next to the visible ones (instead of above),
+				//       so the incoming and outgoing edges aren't aimed at the center : how to fix this?
+				//       We can add invisible edges from the invisible cluster node to force its rank,
+				//       but the result looks weird (hard to describe, the invisible nodes affect the global layout)
+				System.out.println(String.format("%s	%s [label=\"\",shape=point,width=0,height=0]", indent, nodeId));
+				
+				this.printClusters((Map) v, node, i + 1, indent + "\t");
+				
+				System.out.println(String.format("%s}", indent));
+			} else if (!"".equals(k)) { // To avoid duplicates, don't print an additional node if the leaf matches a cluster node 
+				System.out.println(String.format("%s%s [label=\"%s\"]", indent, nodeId, k));
+			}
+			
+			node.set(i, FILLER);
+		});
+	}
+	
+	private final void updateClusters(final List<String> node) {
+		var c = this.clusters;
+		
+		for (var i = 0; i + 1 < node.size(); i += 1) {
+			c = (Map) c.computeIfAbsent(node.get(i), __ -> new LinkedHashMap<>());
+		}
+		
+		c.put(node.get(node.size() - 1), null);
+	}
+	
+	private static final String FILLER = "";
+	
+	private static final <E> List<E> keepLeft(final List<E> elements, final int n, final E filler) {
+		final var result = new ArrayList<>(elements);
+		
+		Collections.fill(result.subList(n + 1, result.size()), filler);
+		
+		return result;
 	}
 	
 }
