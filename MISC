@@ -332,8 +332,8 @@ public final class GraphvizPrinter {
 		this.out = out;
 	}
 	
-	public final void begin() {
-		this.out.println("digraph G {");
+	public final void begin(final boolean isStrict) {
+		this.out.println(String.format("%sdigraph G { // Use strict to merge duplicate edges", isStrict ? "strict " : ""));
 		this.out.println("	layout=dot // Use dot for clustering");
 		this.out.println("	compound=true // If true, allow edges between clusters");
 		this.out.println("	rankdir=TB // TB or LR");
