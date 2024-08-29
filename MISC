@@ -439,6 +439,129 @@ public final class GraphvizPrinter {
 	
 }
 
+/**
+ * @author 2oLDNncs 20240828
+ */
+public final class Indices extends AbstractList<int[]> {
+	
+	private final int[] dims;
+	
+	private final int size;
+	
+	public Indices(final int... dims) {
+		this.dims = dims;
+		
+		if (0 == dims.length) {
+			this.size = 0;
+		} else {
+			long n = 1L;
+			
+			for (final var i : dims) {
+				if (i < 0) {
+					throw new IllegalArgumentException(String.format("%s < 0", i));
+				}
+				
+				n = Objects.checkIndex(n * i, Integer.MAX_VALUE + 1L);
+			}
+			
+			this.size = (int) n;
+		}
+	}
+	
+	public final int[] getDims() {
+		return this.dims;
+	}
+	
+	public final int toIndex(final int[] values) {
+		this.checkLength(values);
+		
+		var result = 0;
+		var dim = 1;
+		
+		for (var i = this.getDims().length - 1; 0 <= i ; i -= 1) {
+			result += values[i] * dim;
+			dim *= this.getDims()[i];
+		}
+		
+		return result;
+	}
+	
+	public final int[] fromIndex(final int index, final int[] values) {
+		Objects.checkIndex(index, this.size());
+		this.checkLength(values);
+		
+		if (0 == index) {
+			Arrays.fill(values, 0, this.getDims().length, 0);
+		} else {
+			var n = index;
+			
+			for (var i = this.getDims().length - 1; 0 <= i; i -= 1) {
+				values[i] = n % this.getDims()[i];
+				n /= this.getDims()[i];
+			}
+		}
+		
+		return values;
+	}
+	
+	@Override
+	public final int[] get(final int index) {
+		return this.fromIndex(index, new int[this.getDims().length]);
+	}
+	
+	@Override
+	public final int size() {
+		return this.size;
+	}
+	
+	@Override
+	public final Iterator<int[]> iterator() {
+		return new Iterator<>() {
+			
+			private final int[] values = new int[getDims().length];
+			
+			{
+				if (0 < this.values.length) {
+					this.values[this.values.length - 1] = -1;
+				}
+			}
+			
+			@Override
+			public final int[] next() {
+				return this.values;
+			}
+			
+			@Override
+			public final boolean hasNext() {
+				return nextIndices(getDims(), this.values);
+			}
+			
+		};
+	}
+	
+	private final void checkLength(final int[] values) {
+		if (this.getDims().length != values.length) {
+			throw new IllegalArgumentException(String.format("Invalid length (expected: %s, actual: %s)",
+					this.getDims().length, values.length));
+		}
+	}
+	
+	public static final boolean nextIndices(final int[] dims, final int[] values) {
+		for (var i = dims.length - 1; 0 <= i; i -= 1) {
+			values[i] += 1;
+			
+			if (values[i] < dims[i]) {
+				return true;
+			}
+			
+			values[i] = 0;
+		}
+		
+		return false;
+	}
+	
+}
+
 function main(workbook: ExcelScript.Workbook) {
 	let selectedSheet = workbook.getActiveWorksheet();
 
