@@ -562,6 +562,171 @@ public final class Indices extends AbstractList<int[]> {
 	
 }
 
+
+/**
+ * @author 2oLDNncs 20241028
+ */
+public final class ArgsParser {
+	
+	private final Map<String, Object> map = new HashMap<>();
+	
+	public final void set(final String key, final Object value) {
+		this.map.put(key, value);
+	}
+	
+	public final byte getByte(final String key) {
+		return this.get(key);
+	}
+	
+	public final char getChar(final String key) {
+		return this.get(key);
+	}
+	
+	public final short getShort(final String key) {
+		return this.get(key);
+	}
+	
+	public final int getInt(final String key) {
+		return this.get(key);
+	}
+	
+	public final long getLong(final String key) {
+		return this.get(key);
+	}
+	
+	public final double getDouble(final String key) {
+		return this.get(key);
+	}
+	
+	public final String getString(final String key) {
+		return this.get(key);
+	}
+	
+	public final File getFile(final String key) {
+		return new File(this.getString(key));
+	}
+	
+	public final Path getPath(final String key) {
+		return this.getFile(key).toPath();
+	}
+	
+	public final void parse(final String... args) {
+		var keyIndex = 0;
+		int keyStep;
+		
+		while (keyIndex < args.length) {
+			final var key = args[keyIndex];
+			final var defaultValue = this.get(key);
+			Object value = "";
+			
+			if (defaultValue instanceof Boolean) {
+				value = !(Boolean) defaultValue;
+				keyStep = 1;
+			} else {
+				final var valueString = args[keyIndex + 1];
+				
+				if (defaultValue instanceof Byte) {
+					value = Byte.parseByte(valueString);
+				} else if (defaultValue instanceof Character) {
+					value = Character.valueOf(valueString.charAt(0));
+				} else if (defaultValue instanceof Short) {
+					value = Short.parseShort(valueString);
+				} else if (defaultValue instanceof Integer) {
+					value = Integer.parseInt(valueString);
+				} else if (defaultValue instanceof Long) {
+					value = Long.parseLong(valueString);
+				} else if (defaultValue instanceof Float) {
+					value = Float.parseFloat(valueString);
+				} else if (defaultValue instanceof Double) {
+					value = Double.parseDouble(valueString);
+				}
+				
+				keyStep = 2;
+			}
+			
+			this.set(key, value);
+			
+			keyIndex += keyStep;
+		}
+	}
+	
+	private final <T> T get(final String key) {
+		return (T) this.map.get(key);
+	}
+	
+}
+
+/**
+ * @author 2oLDNncs 20241030
+ */
+public final class GroupReplacer implements UnaryOperator<String> {
+	
+	private final Pattern pattern;
+	
+	private final IntFunction<String> replacer;
+	
+	public GroupReplacer(final Pattern pattern, final IntFunction<String> replacer) {
+		this.pattern = pattern;
+		this.replacer = replacer;
+	}
+	
+	@Override
+	public final String apply(final String input) {
+		final var matcher = this.pattern.matcher(input);
+		final var result = new StringBuilder();
+		var i = 0;
+		
+		while (matcher.find()) {
+			result.append(input.substring(i, matcher.start()));
+			result.append(this.replacer.apply(groupIndex(matcher)));
+			i = matcher.end();
+		}
+		
+		result.append(input.substring(i));
+		
+		return result.toString();
+	}
+	
+	public static final int groupIndex(final Matcher matcher) {
+		for (var i = 1; i <= matcher.groupCount(); i += 1) {
+			if (null != matcher.group(i)) {
+				return i;
+			}
+		}
+		
+		return 0;
+	}
+	
+}
+
+/**
+ * @author 2oLDNncs 20241030
+ */
+public final class GroupReplacerBuilder {
+	
+	private final List<String> groups = new ArrayList<>();
+	
+	private final List<String> replacements = new ArrayList<>();
+	
+	public final void addReplacement(final String key, final String replacement) {
+		final var group = String.format("(%s)", Pattern.quote(key));
+		
+		if (this.groups.contains(group)) {
+			throw new IllegalArgumentException(String.format("Duplicate replacement key: %s", key));
+		}
+		
+		groups.add(group);
+		replacements.add(replacement);
+	}
+	
+	public final GroupReplacer build() {
+		return new GroupReplacer(
+				Pattern.compile(String.join("|", this.groups)),
+				i -> this.replacements.get(i - 1));
+	}
+	
+}
+
 function main(workbook: ExcelScript.Workbook) {
 	let selectedSheet = workbook.getActiveWorksheet();
 
