@@ -727,6 +727,95 @@ public final class GroupReplacerBuilder {
 	
 }
 
+/**
+ * @author 2oLDNncs 20241108
+ */
+public final class Reshaper {
+	
+	private final int inputPageWidth;
+	
+	private final int inputPageHeight;
+	
+	private final ReshaperLayout inputLayout;
+	
+	private final int inputLayoutStride;
+	
+	private final List<List<String>> data = new ArrayList<>();
+	
+	private int inputLineIndexInPage;
+	
+	private int inputPageVerticalIndex;
+	
+	private int inputPageHorizontalIndex;
+	
+	public Reshaper(final int inputPageWidth, final int inputPageHeight,
+			final ReshaperLayout inputLayout, final int inputLayoutStride) {
+		this.inputPageWidth = inputPageWidth;
+		this.inputPageHeight = inputPageHeight;
+		this.inputLayout = inputLayout;
+		this.inputLayoutStride = inputLayoutStride;
+	}
+	
+	private final String formatDataRowElement(final String element) {
+		return String.format("%-" + this.inputPageWidth + "." + this.inputPageWidth + "s", element);
+	}
+	
+	public final void addInputLine(final String inputLine) {
+		final int r = this.inputLineIndexInPage + this.inputPageVerticalIndex * this.inputPageHeight;
+		final int c = this.inputPageHorizontalIndex;
+		
+		while (this.data.size() <= r) {
+			this.data.add(new ArrayList<>());
+		}
+		
+		while (this.data.get(r).size() <= c) {
+			this.data.get(r).add(this.formatDataRowElement(""));
+		}
+		
+		this.data.get(r).set(c, this.formatDataRowElement(inputLine));
+		
+		this.inputLineIndexInPage += 1;
+		
+		if (this.inputPageHeight <= this.inputLineIndexInPage) {
+			this.inputLineIndexInPage = 0;
+			switch (this.inputLayout) {
+			case HORIZONTAL:
+				this.inputPageHorizontalIndex += 1;
+				if (this.inputLayoutStride <= this.inputPageHorizontalIndex) {
+					this.inputPageHorizontalIndex = 0;
+					this.inputPageVerticalIndex += 1;
+				}
+				break;
+			case VERTICAL:
+				this.inputPageVerticalIndex += 1;
+				if (this.inputLayoutStride <= this.inputPageVerticalIndex) {
+					this.inputPageVerticalIndex = 0;
+					this.inputPageHorizontalIndex += 1;
+				}
+				break;
+			default:
+				throw new IllegalArgumentException(String.format("Invalid input layout: %s", this.inputLayout));
+			}
+		}
+	}
+	
+	public final void printTo(final PrintStream out) {
+		this.data.stream()
+		.map(row -> String.join("", row))
+		.forEach(out::println);
+	}
+	
+}
+
+/**
+ * @author 2oLDNncs 20241108
+ */
+public enum ReshaperLayout {
+	
+	HORIZONTAL, VERTICAL;
+	
+}
+
 function main(workbook: ExcelScript.Workbook) {
 	let selectedSheet = workbook.getActiveWorksheet();
 
