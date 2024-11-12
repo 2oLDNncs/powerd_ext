@@ -610,6 +610,10 @@ public final class ArgsParser {
 		return this.getFile(key).toPath();
 	}
 	
+	public final <E extends Enum<?>> E getEnum(final String key) {
+		return this.get(key);
+	}
+	
 	public final void parse(final String... args) {
 		var keyIndex = 0;
 		int keyStep;
@@ -639,6 +643,8 @@ public final class ArgsParser {
 					value = Float.parseFloat(valueString);
 				} else if (defaultValue instanceof Double) {
 					value = Double.parseDouble(valueString);
+				} else if (defaultValue instanceof Enum<?>) {
+					value = parseEnum(cast(defaultValue.getClass()), valueString);
 				}
 				
 				keyStep = 2;
@@ -651,7 +657,27 @@ public final class ArgsParser {
 	}
 	
 	private final <T> T get(final String key) {
-		return (T) this.map.get(key);
+		return cast(this.map.get(key));
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static final <E extends Enum<?>> E parseEnum(final Class<E> enumClass, final String prefix) {
+		try {
+			for (final var enumValue : (E[]) enumClass.getMethod("values").invoke(null)) {
+				if (enumValue.toString().startsWith(prefix)) {
+					return enumValue;
+				}
+			}
+		} catch (final Exception e) {
+			throw new RuntimeException(e);
+		}
+		
+		throw new IllegalArgumentException(String.format("Failed to parse %s as %s", prefix, enumClass));
+	}
+	
+	@SuppressWarnings("unchecked")
+	private static final <T> T cast(final Object object) {
+		return (T) object;
 	}
 	
 }
@@ -730,41 +756,118 @@ public final class GroupReplacerBuilder {
 /**
  * @author 2oLDNncs 20241108
  */
+public final class Index {
+	
+	private int value;
+	
+	private final int step;
+	
+	private final int end;
+	
+	public Index(final int end) {
+		this(1, end);
+	}
+	
+	public Index(final int step, final int end) {
+		this.step = step;
+		this.end = end;
+	}
+	
+	public final int getValue() {
+		return this.value;
+	}
+	
+	public final void setValue(final int value) {
+		if (value < 0) {
+			throw new IllegalArgumentException();
+		}
+		
+		this.value = value;
+	}
+	
+	public final int getStep() {
+		return this.step;
+	}
+	
+	public final int getEnd() {
+		return this.end;
+	}
+	
+	public final boolean isValid() {
+		return this.getValue() < this.getEnd();
+	}
+	
+	public final void incr() {
+		this.incr(this.getStep());
+	}
+	
+	public final void incr(final int delta) {
+		this.setValue(this.getValue() + delta);
+	}
+	
+	public final boolean next() {
+		return this.next(this.getStep());
+	}
+	
+	public final boolean next(final int delta) {
+		this.incr(delta);
+		
+		if (this.getValue() < this.getEnd()) {
+			return true;
+		}
+		
+		this.setValue(0);
+		
+		return false;
+	}
+	
+	public final void next(final Index iNext) {
+		if (!this.next()) {
+			iNext.incr();
+		}
+	}
+	
+}
+
+/**
+ * @author 2oLDNncs 20241108
+ */
 public final class Reshaper {
 	
 	private final int inputPageWidth;
 	
-	private final int inputPageHeight;
-	
 	private final ReshaperLayout inputLayout;
-	
-	private final int inputLayoutStride;
 	
 	private final List<List<String>> data = new ArrayList<>();
 	
-	private int inputLineIndexInPage;
+	private final Index inputLineIndexInPage;
 	
-	private int inputPageVerticalIndex;
+	private final Index inputPageVerticalIndex;
 	
-	private int inputPageHorizontalIndex;
+	private final Index inputPageHorizontalIndex;
 	
 	public Reshaper(final int inputPageWidth, final int inputPageHeight,
 			final ReshaperLayout inputLayout, final int inputLayoutStride) {
 		this.inputPageWidth = inputPageWidth;
-		this.inputPageHeight = inputPageHeight;
+		this.inputLineIndexInPage = new Index(inputPageHeight);
 		this.inputLayout = inputLayout;
-		this.inputLayoutStride = inputLayoutStride;
+		this.inputPageVerticalIndex = new Index(inputLayoutStride);
+		this.inputPageHorizontalIndex = new Index(inputLayoutStride);
 	}
 	
 	private final String formatDataRowElement(final String element) {
 		return String.format("%-" + this.inputPageWidth + "." + this.inputPageWidth + "s", element);
 	}
 	
+	public static final int to1D(final Index i0, final Index i1) {
+		return i1.getValue() + i0.getValue() * i1.getEnd();
+	}
+	
 	public final void addInputLine(final String inputLine) {
-		final int r = this.inputLineIndexInPage + this.inputPageVerticalIndex * this.inputPageHeight;
-		final int c = this.inputPageHorizontalIndex;
+		final var r = to1D(this.inputPageVerticalIndex, this.inputLineIndexInPage);
+		final var c = this.inputPageHorizontalIndex.getValue();
 		
-		while (this.data.size() <= r) {
+		while (getDataHeight() <= r) {
 			this.data.add(new ArrayList<>());
 		}
 		
@@ -774,35 +877,94 @@ public final class Reshaper {
 		
 		this.data.get(r).set(c, this.formatDataRowElement(inputLine));
 		
-		this.inputLineIndexInPage += 1;
-		
-		if (this.inputPageHeight <= this.inputLineIndexInPage) {
-			this.inputLineIndexInPage = 0;
-			switch (this.inputLayout) {
-			case HORIZONTAL:
-				this.inputPageHorizontalIndex += 1;
-				if (this.inputLayoutStride <= this.inputPageHorizontalIndex) {
-					this.inputPageHorizontalIndex = 0;
-					this.inputPageVerticalIndex += 1;
-				}
-				break;
-			case VERTICAL:
-				this.inputPageVerticalIndex += 1;
-				if (this.inputLayoutStride <= this.inputPageVerticalIndex) {
-					this.inputPageVerticalIndex = 0;
-					this.inputPageHorizontalIndex += 1;
-				}
-				break;
-			default:
-				throw new IllegalArgumentException(String.format("Invalid input layout: %s", this.inputLayout));
-			}
+		if (!this.inputLineIndexInPage.next()) {
+			this.inputLayout.next(this.inputPageVerticalIndex, this.inputPageHorizontalIndex);
 		}
 	}
 	
 	public final void printTo(final PrintStream out) {
+		this.checkData();
+		
 		this.data.stream()
 		.map(row -> String.join("", row))
 		.forEach(out::println);
+	}
+	
+	public final void printTo(final PrintStream out,
+			final int outputPageWidth, final int outputPageHeight, final ReshaperLayout outputLayout) {
+		this.checkData();
+		
+		final var page = this.new Page(outputPageWidth, outputPageHeight, outputLayout);
+		
+		while (page.isValid()) {
+			page.printTo(out);
+			page.next();
+		}
+	}
+	
+	final int getDataWidth() {
+		return addLengths(this.data.get(0));
+	}
+	
+	private static final int addLengths(final Collection<String> strings) {
+		return strings.stream()
+				.mapToInt(String::length)
+				.sum();
+	}
+	
+	final int getDataHeight() {
+		return this.data.size();
+	}
+	
+	final String getData(final int offsetV, final int offsetH, final int width) {
+		return String.join("", this.data.get(offsetV)).substring(offsetH, offsetH + width);
+	}
+	
+	private final void checkData() {
+		if (!this.data.isEmpty()) {
+			final var dataWidth = this.getDataWidth();
+			
+			for (final var row : this.data) {
+				final var rowLength = addLengths(row);
+				
+				if (dataWidth != rowLength) {
+					throw new IllegalStateException(String.format("dataWidth: %s rowLength: %s", dataWidth, rowLength));
+				}
+			}
+		}
+	}
+	
+	/**
+	 * @author 2oLDNncs 20241108
+	 */
+	private final class Page {
+		
+		private final Index vIndex;
+		
+		private final Index hIndex;
+		
+		private final ReshaperLayout layout;
+		
+		Page(final int width, final int height, final ReshaperLayout layout) {
+			this.vIndex = new Index(height, getDataHeight());
+			this.hIndex = new Index(width, getDataWidth());
+			this.layout = layout;
+		}
+		
+		final boolean isValid() {
+			return this.vIndex.isValid() && this.hIndex.isValid();
+		}
+		
+		final void next() {
+			this.layout.next(this.vIndex, this.hIndex);
+		}
+		
+		final void printTo(final PrintStream out) {
+			for (var k = 0; k < this.vIndex.getStep(); k += 1) {
+				out.println(getData(this.vIndex.getValue() + k, this.hIndex.getValue(), this.hIndex.getStep()));
+			}
+		}
+		
 	}
 	
 }
@@ -812,7 +974,23 @@ public final class Reshaper {
  */
 public enum ReshaperLayout {
 	
-	HORIZONTAL, VERTICAL;
+	HORIZONTAL {
+		
+		@Override
+		public final void next(final Index vIndex, final Index hIndex) {
+			hIndex.next(vIndex);
+		}
+		
+	}, VERTICAL {
+		
+		@Override
+		public final void next(final Index vIndex, final Index hIndex) {
+			vIndex.next(hIndex);
+		}
+		
+	};
+	
+	public abstract void next(Index vIndex, Index hIndex);
 	
 }
 
