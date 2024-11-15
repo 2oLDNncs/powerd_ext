@@ -322,11 +322,13 @@ public final class GraphvizPrinter {
 	
 	private final PrintStream out;
 	
+	private final Map<List<String>, Map<String, String>> nodeProps = new LinkedHashMap<>();
 	private final Map<List<String>, Integer> nodeIds = new LinkedHashMap<>();
 	private final Map<String, Object> clusters = new LinkedHashMap<>();
 	
-	private int expectedElementsLength = -1;
-	private int lineNumber = 1;
+	private int expectedArcElementsLength = -1;
+	private int propLineNumber = 1;
+	private int arcLineNumber = 1;
 	
 	public GraphvizPrinter(final PrintStream out) {
 		this.out = out;
@@ -339,22 +341,43 @@ public final class GraphvizPrinter {
 		this.out.println("	rankdir=TB // TB or LR");
 	}
 	
-	public final void process(final String... elements) {
-		if (0 != (elements.length & 1)) {
-			throw new IllegalArgumentException(String.format("Line %s: Odd number of elements", this.lineNumber));
+	public final void processProp(final String... propElements) {
+		if (this.expectedArcElementsLength < 0) {
+			this.expectedArcElementsLength = 2 * (propElements.length - 2);
 		}
 		
-		if (this.expectedElementsLength < 0) {
-			this.expectedElementsLength = elements.length;
+		if (this.expectedArcElementsLength / 2 + 2 != propElements.length) {
+			throw new IllegalArgumentException(String.format("Prop line %s: Wrong number of elements (expected: %s, actual: %s)",
+					this.propLineNumber,
+					this.expectedArcElementsLength / 2 + 2,
+					propElements.length));
 		}
 		
-		if (this.expectedElementsLength != elements.length) {
+		final var node = Arrays.asList(Arrays.copyOf(propElements, propElements.length - 2));
+		final var propKey = propElements[propElements.length - 2];
+		final var propVal = propElements[propElements.length - 1];
+		
+		this.nodeProps.computeIfAbsent(node, __ -> new LinkedHashMap<>()).put(propKey, propVal);
+		
+		this.propLineNumber += 1;
+	}
+	
+	public final void processArc(final String... arcElements) {
+		if (0 != (arcElements.length & 1)) {
+			throw new IllegalArgumentException(String.format("Arc line %s: Odd number of elements", this.arcLineNumber));
+		}
+		
+		if (this.expectedArcElementsLength < 0) {
+			this.expectedArcElementsLength = arcElements.length;
+		}
+		
+		if (this.expectedArcElementsLength != arcElements.length) {
 			throw new IllegalArgumentException(String.format("Line %s: Wrong number of elements (expected: %s, actual: %s)",
-					this.lineNumber, this.expectedElementsLength, elements.length));
+					this.arcLineNumber, this.expectedArcElementsLength, arcElements.length));
 		}
 		
-		final var tail = Arrays.asList(Arrays.copyOfRange(elements, 0, elements.length / 2));
-		final var head = Arrays.asList(Arrays.copyOfRange(elements, elements.length / 2, elements.length));
+		final var tail = Arrays.asList(Arrays.copyOfRange(arcElements, 0, arcElements.length / 2));
+		final var head = Arrays.asList(Arrays.copyOfRange(arcElements, arcElements.length / 2, arcElements.length));
 		
 		this.updateNodeIds(tail);
 		this.updateNodeIds(head);
@@ -371,11 +394,11 @@ public final class GraphvizPrinter {
 		this.out.println(String.format("	%s -> %s [ltail=cluster_%s,lhead=cluster_%s]",
 				tailId, headId, tailId, headId));
 		
-		this.lineNumber += 1;
+		this.arcLineNumber += 1;
 	}
 	
 	public final void end() {
-		final var node = new ArrayList<>(Collections.nCopies(this.expectedElementsLength / 2, FILLER));
+		final var node = new ArrayList<>(Collections.nCopies(this.expectedArcElementsLength / 2, FILLER));
 		
 		printClusters(this.clusters, node, 0, "\t");
 		
@@ -393,11 +416,16 @@ public final class GraphvizPrinter {
 		clusters.forEach((k, v) -> {
 			node.set(i, k);
 			final var nodeId = Objects.requireNonNull(this.nodeIds.get(node));
+			final var nodeProps = this.nodeProps.getOrDefault(node, Collections.emptyMap());
 			
 			if (i + 1 < node.size()) {
 				// Graphviz doc: Clusters are encoded as subgraphs whose names have the prefix 'cluster'.
 				System.out.println(String.format("%ssubgraph cluster_%s {", indent, nodeId));
 				System.out.println(String.format("%s	label=\"%s\"", indent, k));
+				
+				nodeProps.forEach((propK, propV) -> {
+					System.out.println(String.format("%s	%s=\"%s\"", indent, propK, propV));
+				});
 				
 				// This is a trick to get a node that can be used to connect to/from the whole cluster using ltail and lhead
 				// FIXME This invisible node actually gets positioned next to the visible ones (instead of above),
@@ -409,8 +437,18 @@ public final class GraphvizPrinter {
 				this.printClusters((Map) v, node, i + 1, indent + "\t");
 				
 				System.out.println(String.format("%s}", indent));
-			} else if (!"".equals(k)) { // To avoid duplicates, don't print an additional node if the leaf matches a cluster node 
-				System.out.println(String.format("%s%s [label=\"%s\"]", indent, nodeId, k));
+			} else if (!"".equals(k)) { // To avoid duplicates, don't print an additional node if the leaf matches a cluster node
+				final var props = new StringBuilder();
+				
+				nodeProps.forEach((propK, propV) -> {
+					props.append(",");
+					props.append(propK);
+					props.append("=\"");
+					props.append(propV);
+					props.append("\"");
+				});
+				
+				System.out.println(String.format("%s%s [label=\"%s\"%s]", indent, nodeId, k, props));
 			}
 			
 			node.set(i, FILLER);
@@ -645,6 +683,8 @@ public final class ArgsParser {
 					value = Double.parseDouble(valueString);
 				} else if (defaultValue instanceof Enum<?>) {
 					value = parseEnum(cast(defaultValue.getClass()), valueString);
+				} else {
+					value = valueString;
 				}
 				
 				keyStep = 2;
