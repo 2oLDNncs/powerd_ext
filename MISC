@@ -323,11 +323,14 @@ public final class GraphvizPrinter {
 	private final PrintStream out;
 	
 	private final Map<List<String>, Map<String, String>> nodeProps = new LinkedHashMap<>();
+	private final Map<List<Integer>, Map<String, String>> arcProps = new LinkedHashMap<>();
 	private final Map<List<String>, Integer> nodeIds = new LinkedHashMap<>();
 	private final Map<String, Object> clusters = new LinkedHashMap<>();
+	private final Collection<List<Integer>> arcs = new ArrayList<>();
 	
 	private int expectedArcElementsLength = -1;
-	private int propLineNumber = 1;
+	private int nodePropLineNumber = 1;
+	private int arcPropLineNumber = 1;
 	private int arcLineNumber = 1;
 	
 	public GraphvizPrinter(final PrintStream out) {
@@ -341,30 +344,84 @@ public final class GraphvizPrinter {
 		this.out.println("	rankdir=TB // TB or LR");
 	}
 	
-	public final void processProp(final String... propElements) {
-		if (this.expectedArcElementsLength < 0) {
-			this.expectedArcElementsLength = 2 * (propElements.length - 2);
-		}
-		
-		if (this.expectedArcElementsLength / 2 + 2 != propElements.length) {
-			throw new IllegalArgumentException(String.format("Prop line %s: Wrong number of elements (expected: %s, actual: %s)",
-					this.propLineNumber,
-					this.expectedArcElementsLength / 2 + 2,
-					propElements.length));
-		}
-		
-		final var node = Arrays.asList(Arrays.copyOf(propElements, propElements.length - 2));
-		final var propKey = propElements[propElements.length - 2];
-		final var propVal = propElements[propElements.length - 1];
+	/**
+	 * @param nodePropElements an array of length N+2:
+	 * [nodeParts[0], ..., nodeParts[N-1], propKey, propVal]
+	 */
+	public final void processNodeProp(final String... nodePropElements) {
+		final var node = this.toNode(String.format("Node prop line %s", this.nodePropLineNumber),
+				Arrays.copyOf(nodePropElements, nodePropElements.length - 2));
+		final var propKey = nodePropElements[nodePropElements.length - 2];
+		final var propVal = nodePropElements[nodePropElements.length - 1];
 		
 		this.nodeProps.computeIfAbsent(node, __ -> new LinkedHashMap<>()).put(propKey, propVal);
 		
-		this.propLineNumber += 1;
+		this.nodePropLineNumber += 1;
 	}
 	
+	/**
+	 * @param arcPropElements an array of length 2*N+2:
+	 * [tailNodeParts[0], ..., tailNodeParts[N-1], headNodeParts[0], ..., headNodeParts[N-1], propKey, propVal]
+	 */
+	public final void processArcProp(final String... arcPropElements) {
+		final var arc = this.toArc(String.format("Arc prop line %s", this.arcPropLineNumber),
+				Arrays.copyOf(arcPropElements, arcPropElements.length - 2));
+		final var propKey = arcPropElements[arcPropElements.length - 2];
+		final var propVal = arcPropElements[arcPropElements.length - 1];
+		
+		this.arcProps.computeIfAbsent(arc, __ -> new LinkedHashMap<>()).put(propKey, propVal);
+		
+		this.arcPropLineNumber += 1;
+	}
+	
+	/**
+	 * @param arcElements an array of length 2*N:
+	 * [tailNodeParts[0], ..., tailNodeParts[N-1], headNodeParts[0], ..., headNodeParts[N-1]]
+	 */
 	public final void processArc(final String... arcElements) {
+		this.arcs.add(this.toArc(String.format("Arc line %s", this.arcLineNumber), arcElements));
+		
+		this.arcLineNumber += 1;
+	}
+	
+	private final void printArcs() {
+		this.arcs.forEach(arc -> {
+			final var tailId = arc.get(0);
+			final var headId = arc.get(1);
+			// It is possible to use ltail and lhead all the time
+			// When the node is an actual cluster node, Graphviz will clip the edges appropriately
+			// Otherwise, the nodes are connected as usual
+			this.out.println(String.format("	%s -> %s [ltail=cluster_%s,lhead=cluster_%s,%s]",
+					tailId, headId, tailId, headId,
+					formatProps(this.arcProps.getOrDefault(arc, Collections.emptyMap()))));
+		});
+	}
+	
+	public final void end() {
+		this.printArcs();
+		this.printClusters();
+		
+		this.out.println("}");
+	}
+	
+	private final List<String> toNode(final String context, final String[] nodeElements) {
+		if (this.expectedArcElementsLength < 0) {
+			this.expectedArcElementsLength = 2 * nodeElements.length;
+		}
+		
+		if (this.expectedArcElementsLength / 2 != nodeElements.length) {
+			throw new IllegalArgumentException(String.format("%s: Wrong number of elements (expected: %s, actual: %s)",
+					context,
+					this.expectedArcElementsLength / 2,
+					nodeElements.length));
+		}
+		
+		return Arrays.asList(nodeElements);
+	}
+	
+	private final List<Integer> toArc(final String context, final String[] arcElements) {
 		if (0 != (arcElements.length & 1)) {
-			throw new IllegalArgumentException(String.format("Arc line %s: Odd number of elements", this.arcLineNumber));
+			throw new IllegalArgumentException(String.format("%s: Odd number of elements", context));
 		}
 		
 		if (this.expectedArcElementsLength < 0) {
@@ -372,8 +429,8 @@ public final class GraphvizPrinter {
 		}
 		
 		if (this.expectedArcElementsLength != arcElements.length) {
-			throw new IllegalArgumentException(String.format("Line %s: Wrong number of elements (expected: %s, actual: %s)",
-					this.arcLineNumber, this.expectedArcElementsLength, arcElements.length));
+			throw new IllegalArgumentException(String.format("%s: Wrong number of elements (expected: %s, actual: %s)",
+					context, this.expectedArcElementsLength, arcElements.length));
 		}
 		
 		final var tail = Arrays.asList(Arrays.copyOfRange(arcElements, 0, arcElements.length / 2));
@@ -388,21 +445,7 @@ public final class GraphvizPrinter {
 		final var tailId = this.nodeIds.get(tail);
 		final var headId = this.nodeIds.get(head);
 		
-		// It is possible to use ltail and lhead all the time
-		// When the node is an actual cluster node, Graphviz will clip the edges appropriately
-		// Otherwise, the nodes are connected as usual
-		this.out.println(String.format("	%s -> %s [ltail=cluster_%s,lhead=cluster_%s]",
-				tailId, headId, tailId, headId));
-		
-		this.arcLineNumber += 1;
-	}
-	
-	public final void end() {
-		final var node = new ArrayList<>(Collections.nCopies(this.expectedArcElementsLength / 2, FILLER));
-		
-		printClusters(this.clusters, node, 0, "\t");
-		
-		this.out.println("}");
+		return Arrays.asList(tailId, headId);
 	}
 	
 	private final void updateNodeIds(final List<String> node) {
@@ -411,17 +454,24 @@ public final class GraphvizPrinter {
 		}
 	}
 	
+	private final void printClusters() {
+		final var node = new ArrayList<>(Collections.nCopies(this.expectedArcElementsLength / 2, FILLER));
+		
+		this.printClusters(this.clusters, node, 0, "\t");
+	}
+	
 	private final void printClusters(final Map<String, Object> clusters,
 			final List<String> node, final int i, final String indent) {
 		clusters.forEach((k, v) -> {
 			node.set(i, k);
 			final var nodeId = Objects.requireNonNull(this.nodeIds.get(node));
-			final var nodeProps = this.nodeProps.getOrDefault(node, Collections.emptyMap());
+			final var nodeProps = new LinkedHashMap<>(Map.of("label", k));
+			
+			nodeProps.putAll(this.nodeProps.getOrDefault(node, Collections.emptyMap()));
 			
 			if (i + 1 < node.size()) {
 				// Graphviz doc: Clusters are encoded as subgraphs whose names have the prefix 'cluster'.
 				System.out.println(String.format("%ssubgraph cluster_%s {", indent, nodeId));
-				System.out.println(String.format("%s	label=\"%s\"", indent, k));
 				
 				nodeProps.forEach((propK, propV) -> {
 					System.out.println(String.format("%s	%s=\"%s\"", indent, propK, propV));
@@ -438,17 +488,8 @@ public final class GraphvizPrinter {
 				
 				System.out.println(String.format("%s}", indent));
 			} else if (!"".equals(k)) { // To avoid duplicates, don't print an additional node if the leaf matches a cluster node
-				final var props = new StringBuilder();
-				
-				nodeProps.forEach((propK, propV) -> {
-					props.append(",");
-					props.append(propK);
-					props.append("=\"");
-					props.append(propV);
-					props.append("\"");
-				});
-				
-				System.out.println(String.format("%s%s [label=\"%s\"%s]", indent, nodeId, k, props));
+				System.out.println(String.format("%s%s [%s]",
+						indent, nodeId, formatProps(nodeProps)));
 			}
 			
 			node.set(i, FILLER);
@@ -473,6 +514,12 @@ public final class GraphvizPrinter {
 		Collections.fill(result.subList(n + 1, result.size()), filler);
 		
 		return result;
+	}
+	
+	private static final String formatProps(final Map<String, String> props) {
+		return String.join(",", props.entrySet().stream()
+				.map(e -> String.format("%s=\"%s\"", e.getKey(), e.getValue()))
+				.toArray(String[]::new));
 	}
 	
 }
