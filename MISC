@@ -117,6 +117,10 @@ public class XSSFWorkbookToGraphviz {
 	}
 	
 	public static final String toString(final Cell cell) {
+		if (null == cell) {
+			return "";
+		}
+		
 		if (CellType.FORMULA.equals(cell.getCellType())) {
 			switch (cell.getCachedFormulaResultType()) {
 			case NUMERIC:
@@ -132,7 +136,7 @@ public class XSSFWorkbookToGraphviz {
 			}
 		}
 		
-		return Objects.toString(cell);
+		return cell.toString();
 	}
 	
 	/**
