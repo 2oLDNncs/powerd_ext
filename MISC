@@ -32,6 +32,7 @@ public class XSSFWorkbookToGraphviz {
 	static final String ARG_ARCS = "-Arcs";
 	static final String ARG_NODE_PROPS = "-NodeProps";
 	static final String ARG_ARC_PROPS = "-ArcProps";
+	static final String ARG_RANKDIR = "-Rankdir";
 	static final String ARG_OUT = "-Out";
 	
 	public static final void main(final String[] args) throws InvalidFormatException, IOException {
@@ -41,42 +42,50 @@ public class XSSFWorkbookToGraphviz {
 		ap.set(ARG_ARCS, "Arcs");
 		ap.set(ARG_NODE_PROPS, "Node Props");
 		ap.set(ARG_ARC_PROPS, "Arc Props");
+		ap.setDefault(ARG_RANKDIR, "TB");
 		ap.set(ARG_OUT, "data/test_gv.gv");
 		
-		ap.parse(args);
-		
-		if (!ap.getString(ARG_OUT).isBlank()) {
-			try (final var out = new PrintStream(ap.getFile(ARG_OUT))) {
-				process(ap, out);
-			}
-		} else {
-			process(ap, System.out);
+		try (final var workbook = new XSSFWorkbook(ap.getFile(ARG_IN))) {
+			processWorkbook(workbook, ap);
 		}
 	}
 	
-	private static final void process(final ArgsParser ap, final PrintStream out) throws IOException, InvalidFormatException {
-		try (final var workbook = new XSSFWorkbook(ap.getFile(ARG_IN))) {
+	private static final void processWorkbook(final XSSFWorkbook workbook, final ArgsParser ap)
+			throws FileNotFoundException {
+		final PrintStream out;
+		
+		if (!ap.getString(ARG_OUT).isBlank()) {
+			out = new PrintStream(ap.getFile(ARG_OUT));
+		} else {
+			out = System.out;
+		}
+		
+		try {
 			final var gvp = new GraphvizPrinter(out);
 			
-			gvp.begin(true);
+			gvp.begin(true, "dot", true, ap.getString(ARG_RANKDIR));
 			
 			if (!ap.getString(ARG_ARCS).isEmpty()) {
-				forEachLine(workbook.getSheet(ap.getString(ARG_ARCS)), gvp::processArc);
+				forEachRow(workbook.getSheet(ap.getString(ARG_ARCS)), gvp::processArc);
 			}
 			
 			if (!ap.getString(ARG_NODE_PROPS).isEmpty()) {
-				forEachLine(workbook.getSheet(ap.getString(ARG_NODE_PROPS)), gvp::processNodeProp);
+				forEachRow(workbook.getSheet(ap.getString(ARG_NODE_PROPS)), gvp::processNodeProp);
 			}
 			
 			if (!ap.getString(ARG_ARC_PROPS).isEmpty()) {
-				forEachLine(workbook.getSheet(ap.getString(ARG_ARC_PROPS)), gvp::processArcProp);
+				forEachRow(workbook.getSheet(ap.getString(ARG_ARC_PROPS)), gvp::processArcProp);
 			}
 			
 			gvp.end();
+		} finally {
+			if (System.out != out) {
+				out.close();
+			}
 		}
 	}
 	
-	public static final void forEachLine(final XSSFSheet sheet, final Consumer<String[]> action) {
+	public static final void forEachRow(final XSSFSheet sheet, final Consumer<String[]> action) {
 		final var rowRange = new IntRange();
 		final var colRange = new IntRange();
 		
@@ -510,11 +519,29 @@ public final class GraphvizPrinter {
 		this.out = out;
 	}
 	
-	public final void begin(final boolean isStrict) {
-		this.out.println(String.format("%sdigraph G { // Use strict to merge duplicate edges", isStrict ? "strict " : ""));
-		this.out.println("	layout=dot // Use dot for clustering");
-		this.out.println("	compound=true // If true, allow edges between clusters");
-		this.out.println("	rankdir=TB // TB or LR");
+	/**
+	 * Call <code>begin(<br>
+	 * 	true,  // strict, to merge duplicate edges<br>
+	 *  "dot", // dot layout, to allow clustering<br>
+	 *  true,  // compound, to allow edges between clusters<br>
+	 *  "TB"   // Top Down direction
+	 * )</code>
+	 */
+	public final void begin() {
+		this.begin(true, "dot", true, "TB");
+	}
+	
+	/**
+	 * @param strict If true, merge duplicate edges
+	 * @param layout
+	 * @param compound If true, allow edges between clusters
+	 * @param rankdir
+	 */
+	public final void begin(final boolean strict, final String layout, final boolean compound, final String rankdir) {
+		this.out.println(String.format("%sdigraph G { // Use strict to merge duplicate edges", strict ? "strict " : ""));
+		this.out.println(String.format("	layout=%s // Use dot for clustering", layout));
+		this.out.println(String.format("	compound=%s // If true, allow edges between clusters", compound));
+		this.out.println(String.format("	rankdir=%s // TB or LR", rankdir));
 	}
 	
 	/**
@@ -524,6 +551,9 @@ public final class GraphvizPrinter {
 	public final void processNodeProp(final String... nodePropElements) {
 		final var node = this.toNode(String.format("Node prop line %s", this.nodePropLineNumber),
 				Arrays.copyOf(nodePropElements, nodePropElements.length - 2));
+		
+		this.addNode(node);
+		
 		final var propKey = nodePropElements[nodePropElements.length - 2];
 		final var propVal = nodePropElements[nodePropElements.length - 1];
 		
@@ -609,16 +639,18 @@ public final class GraphvizPrinter {
 		final var tail = Arrays.asList(Arrays.copyOfRange(arcElements, 0, arcElements.length / 2));
 		final var head = Arrays.asList(Arrays.copyOfRange(arcElements, arcElements.length / 2, arcElements.length));
 		
-		this.updateNodeIds(tail);
-		this.updateNodeIds(head);
-		
-		this.updateClusters(tail);
-		this.updateClusters(head);
+		this.addNode(tail);
+		this.addNode(head);
 		
 		final var tailId = this.nodeIds.get(tail);
 		final var headId = this.nodeIds.get(head);
 		
 		return Arrays.asList(tailId, headId);
+	}
+	
+	private void addNode(final List<String> node) {
+		this.updateNodeIds(node);
+		this.updateClusters(node);
 	}
 	
 	private final void updateNodeIds(final List<String> node) {
@@ -826,10 +858,26 @@ public final class Indices extends AbstractList<int[]> {
  */
 public final class ArgsParser {
 	
+	private String[] args;
+	
 	private final Map<String, Object> map = new HashMap<>();
 	
-	public final void set(final String key, final Object value) {
-		this.map.put(key, value);
+	public ArgsParser(final String... args) {
+		this.args = args;
+	}
+	
+	public final void setDefault(final String key, final Object value) {
+		if (null == this.map.get(key)) {
+			this.set(key, value);
+		}
+	}
+	
+	private final void set(final String key, final Object value) {
+		this.map.put(key, Objects.requireNonNull(value));
+	}
+	
+	public final boolean getBoolean(final String key) {
+		return this.get(key);
 	}
 	
 	public final byte getByte(final String key) {
@@ -872,7 +920,14 @@ public final class ArgsParser {
 		return this.get(key);
 	}
 	
-	public final void parse(final String... args) {
+	private final void parse() {
+		if (null == this.args) {
+			return;
+		}
+		
+		final var args = this.args;
+		this.args = null;
+		
 		var keyIndex = 0;
 		int keyStep;
 		
@@ -917,6 +972,8 @@ public final class ArgsParser {
 	}
 	
 	private final <T> T get(final String key) {
+		this.parse();
+		
 		return cast(this.map.get(key));
 	}
 	
