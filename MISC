@@ -28,22 +28,22 @@ End Function
  */
 public class XSSFWorkbookToGraphviz {
 	
-	static final String ARG_IN = "-In";
-	static final String ARG_ARCS = "-Arcs";
-	static final String ARG_NODE_PROPS = "-NodeProps";
-	static final String ARG_ARC_PROPS = "-ArcProps";
-	static final String ARG_RANKDIR = "-Rankdir";
-	static final String ARG_OUT = "-Out";
+	public static final String ARG_IN = "-In";
+	public static final String ARG_ARCS = "-Arcs";
+	public static final String ARG_NODE_PROPS = "-NodeProps";
+	public static final String ARG_ARC_PROPS = "-ArcProps";
+	public static final String ARG_RANKDIR = "-Rankdir";
+	public static final String ARG_OUT = "-Out";
 	
 	public static final void main(final String[] args) throws InvalidFormatException, IOException {
-		final var ap = new ArgsParser();
+		final var ap = new ArgsParser(args);
 		
-		ap.set(ARG_IN, "data/test_gv.xlsx");
-		ap.set(ARG_ARCS, "Arcs");
-		ap.set(ARG_NODE_PROPS, "Node Props");
-		ap.set(ARG_ARC_PROPS, "Arc Props");
+		ap.setDefault(ARG_IN, "data/test_gv.xlsx");
+		ap.setDefault(ARG_ARCS, "Arcs");
+		ap.setDefault(ARG_NODE_PROPS, "Node Props");
+		ap.setDefault(ARG_ARC_PROPS, "Arc Props");
 		ap.setDefault(ARG_RANKDIR, "TB");
-		ap.set(ARG_OUT, "data/test_gv.gv");
+		ap.setDefault(ARG_OUT, "data/test_gv.gv");
 		
 		try (final var workbook = new XSSFWorkbook(ap.getFile(ARG_IN))) {
 			processWorkbook(workbook, ap);
@@ -557,7 +557,7 @@ public final class GraphvizPrinter {
 		final var propKey = nodePropElements[nodePropElements.length - 2];
 		final var propVal = nodePropElements[nodePropElements.length - 1];
 		
-		this.nodeProps.computeIfAbsent(node, __ -> new LinkedHashMap<>()).put(propKey, propVal);
+		setObjProp(this.nodeProps, node, propKey, propVal);
 		
 		this.nodePropLineNumber += 1;
 	}
@@ -572,7 +572,7 @@ public final class GraphvizPrinter {
 		final var propKey = arcPropElements[arcPropElements.length - 2];
 		final var propVal = arcPropElements[arcPropElements.length - 1];
 		
-		this.arcProps.computeIfAbsent(arc, __ -> new LinkedHashMap<>()).put(propKey, propVal);
+		setObjProp(this.arcProps, arc, propKey, propVal);
 		
 		this.arcPropLineNumber += 1;
 	}
@@ -679,12 +679,12 @@ public final class GraphvizPrinter {
 				this.out.println(String.format("%ssubgraph cluster_%s {", indent, nodeId));
 				
 				nodeProps.forEach((propK, propV) -> {
-					this.out.println(String.format("%s	%s=\"%s\"", indent, propK, propV));
+					this.out.println(String.format("%s	%s=%s", indent, propK, formatPropValue(propV)));
 				});
 				
 				// This is a trick to get a node that can be used to connect to/from the whole cluster using ltail and lhead
-				// FIXME This invisible node actually gets positioned next to the visible ones (instead of above),
-				//       so the incoming and outgoing edges aren't aimed at the center : how to fix this?
+				// FIXME This invisible node actually gets positioned somewhere next to the visible ones,
+				//       so the incoming and outgoing edges aren't aimed at the center of the cluster : how to fix this?
 				//       We can add invisible edges from the invisible cluster node to force its rank,
 				//       but the result looks weird (hard to describe, the invisible nodes affect the global layout)
 				this.out.println(String.format("%s	%s [label=\"\",shape=point,width=0,height=0]", indent, nodeId));
@@ -721,10 +721,23 @@ public final class GraphvizPrinter {
 		return result;
 	}
 	
+	private static final <K> void setObjProp(final Map<K, Map<String, String>> props,
+			final K obj, final String propKey, final String propVal) {
+		props.computeIfAbsent(obj, __ -> new LinkedHashMap<>()).put(propKey, propVal);
+	}
+	
 	private static final String formatProps(final Map<String, String> props) {
 		return String.join(",", props.entrySet().stream()
-				.map(e -> String.format("%s=\"%s\"", e.getKey(), e.getValue()))
+				.map(e -> String.format("%s=%s", e.getKey(), formatPropValue(e.getValue())))
 				.toArray(String[]::new));
+	}
+	
+	private static final String formatPropValue(final String value) {
+		if (value.startsWith("<") && value.endsWith(">")) {
+			return value;
+		}
+		
+		return String.format("\"%s\"", value);
 	}
 	
 }
