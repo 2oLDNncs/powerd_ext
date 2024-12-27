@@ -32,6 +32,7 @@ public class XSSFWorkbookToGraphviz {
 	public static final String ARG_ARCS = "-Arcs";
 	public static final String ARG_NODE_PROPS = "-NodeProps";
 	public static final String ARG_ARC_PROPS = "-ArcProps";
+	public static final String ARG_CLASS_PROPS = "-ClassProps";
 	public static final String ARG_RANKDIR = "-Rankdir";
 	public static final String ARG_OUT = "-Out";
 	
@@ -42,6 +43,7 @@ public class XSSFWorkbookToGraphviz {
 		ap.setDefault(ARG_ARCS, "Arcs");
 		ap.setDefault(ARG_NODE_PROPS, "Node Props");
 		ap.setDefault(ARG_ARC_PROPS, "Arc Props");
+		ap.setDefault(ARG_CLASS_PROPS, "Class Props");
 		ap.setDefault(ARG_RANKDIR, "TB");
 		ap.setDefault(ARG_OUT, "data/test_gv.gv");
 		
@@ -65,23 +67,31 @@ public class XSSFWorkbookToGraphviz {
 			
 			gvp.begin(true, "dot", true, ap.getString(ARG_RANKDIR));
 			
-			if (!ap.getString(ARG_ARCS).isEmpty()) {
-				forEachRow(workbook.getSheet(ap.getString(ARG_ARCS)), gvp::processArc);
-			}
-			
-			if (!ap.getString(ARG_NODE_PROPS).isEmpty()) {
-				forEachRow(workbook.getSheet(ap.getString(ARG_NODE_PROPS)), gvp::processNodeProp);
-			}
-			
-			if (!ap.getString(ARG_ARC_PROPS).isEmpty()) {
-				forEachRow(workbook.getSheet(ap.getString(ARG_ARC_PROPS)), gvp::processArcProp);
-			}
+			processSheet(workbook, ap, ARG_ARCS, gvp::processArc);
+			processSheet(workbook, ap, ARG_NODE_PROPS, gvp::processNodeProp);
+			processSheet(workbook, ap, ARG_ARC_PROPS, gvp::processArcProp);
+			processSheet(workbook, ap, ARG_CLASS_PROPS, gvp::processClassProp);
 			
 			gvp.end();
 		} finally {
 			if (System.out != out) {
 				out.close();
 			}
+		}
+	}
+	
+	private static final void processSheet(final XSSFWorkbook workbook, final ArgsParser ap, final String apKey,
+			final Consumer<String[]> action) {
+		final var sheetName = ap.getString(apKey);
+		
+		if (!sheetName.isEmpty()) {
+			final var sheet = workbook.getSheet(sheetName);
+			
+			if (null == sheet) {
+				throw new IllegalStateException(String.format("Sheet not found: %s", sheetName));
+			}
+			
+			forEachRow(sheet, action);
 		}
 	}
 	
@@ -506,6 +516,7 @@ public final class GraphvizPrinter {
 	
 	private final Map<List<String>, Map<String, String>> nodeProps = new LinkedHashMap<>();
 	private final Map<List<Integer>, Map<String, String>> arcProps = new LinkedHashMap<>();
+	private final Map<String, Map<String, String>> classProps = new LinkedHashMap<>();
 	private final Map<List<String>, Integer> nodeIds = new LinkedHashMap<>();
 	private final Map<String, Object> clusters = new LinkedHashMap<>();
 	private final Collection<List<Integer>> arcs = new ArrayList<>();
@@ -563,6 +574,18 @@ public final class GraphvizPrinter {
 	}
 	
 	/**
+	 * @param classPropElements an array of length 3:
+	 * [className, propKey, propVal]
+	 */
+	public final void processClassProp(final String... classPropElements) {
+		final var className = classPropElements[0];
+		final var propKey = classPropElements[1];
+		final var propVal = classPropElements[2];
+		
+		setObjProp(this.classProps, className, propKey, propVal);
+	}
+	
+	/**
 	 * @param arcPropElements an array of length 2*N+2:
 	 * [tailNodeParts[0], ..., tailNodeParts[N-1], headNodeParts[0], ..., headNodeParts[N-1], propKey, propVal]
 	 */
@@ -585,19 +608,6 @@ public final class GraphvizPrinter {
 		this.arcs.add(this.toArc(String.format("Arc line %s", this.arcLineNumber), arcElements));
 		
 		this.arcLineNumber += 1;
-	}
-	
-	private final void printArcs() {
-		this.arcs.forEach(arc -> {
-			final var tailId = arc.get(0);
-			final var headId = arc.get(1);
-			// It is possible to use ltail and lhead all the time
-			// When the node is an actual cluster node, Graphviz will clip the edges appropriately
-			// Otherwise, the nodes are connected as usual
-			this.out.println(String.format("	%s -> %s [ltail=cluster_%s,lhead=cluster_%s,%s]",
-					tailId, headId, tailId, headId,
-					formatProps(this.arcProps.getOrDefault(arc, Collections.emptyMap()))));
-		});
 	}
 	
 	public final void end() {
@@ -659,6 +669,22 @@ public final class GraphvizPrinter {
 		}
 	}
 	
+	private final void printArcs() {
+		this.arcs.forEach(arc -> {
+			final var tailId = arc.get(0);
+			final var headId = arc.get(1);
+			final var props = Collections.<String, String>emptyMap();
+			
+			this.applyProps(this.arcProps.getOrDefault(arc, Collections.emptyMap()), props);
+			
+			// It is possible to use ltail and lhead all the time
+			// When the node is an actual cluster node, Graphviz will clip the edges appropriately
+			// Otherwise, the nodes are connected as usual
+			this.out.println(String.format("	%s -> %s [ltail=cluster_%s,lhead=cluster_%s,%s]",
+					tailId, headId, tailId, headId, formatProps(props)));
+		});
+	}
+	
 	private final void printClusters() {
 		final var node = new ArrayList<>(Collections.nCopies(this.expectedArcElementsLength / 2, FILLER));
 		
@@ -670,15 +696,15 @@ public final class GraphvizPrinter {
 		clusters.forEach((k, v) -> {
 			node.set(i, k);
 			final var nodeId = Objects.requireNonNull(this.nodeIds.get(node));
-			final var nodeProps = new LinkedHashMap<>(Map.of("label", k));
+			final var props = new LinkedHashMap<>(Map.of("label", k));
 			
-			nodeProps.putAll(this.nodeProps.getOrDefault(node, Collections.emptyMap()));
+			this.applyProps(this.nodeProps.getOrDefault(node, Collections.emptyMap()), props);
 			
 			if (i + 1 < node.size()) {
 				// Graphviz doc: Clusters are encoded as subgraphs whose names have the prefix 'cluster'.
 				this.out.println(String.format("%ssubgraph cluster_%s {", indent, nodeId));
 				
-				nodeProps.forEach((propK, propV) -> {
+				props.forEach((propK, propV) -> {
 					this.out.println(String.format("%s	%s=%s", indent, propK, formatPropValue(propV)));
 				});
 				
@@ -694,7 +720,7 @@ public final class GraphvizPrinter {
 				this.out.println(String.format("%s}", indent));
 			} else if (!"".equals(k)) { // To avoid duplicates, don't print an additional node if the leaf matches a cluster node
 				this.out.println(String.format("%s%s [%s]",
-						indent, nodeId, formatProps(nodeProps)));
+						indent, nodeId, formatProps(props)));
 			}
 			
 			node.set(i, FILLER);
@@ -710,6 +736,34 @@ public final class GraphvizPrinter {
 		
 		c.put(node.get(node.size() - 1), null);
 	}
+	
+	private final void applyProps(final Map<String, String> src, final Map<String, String> dst) {
+		this.applyProps(src, dst, new HashSet<>());
+	}
+	
+	private final void applyProps(final Map<String, String> src, final Map<String, String> dst, final Collection<String> done) {
+		for (final var className : src.getOrDefault(PROPKEY_CLASSES, ",").split(",")) {
+			final var classProps = this.classProps.get(className);
+			
+			if (null != classProps) {
+				if (done.add(className)) {
+					this.applyProps(classProps, dst, done);
+				} else {
+					System.err.println(String.format("Warning: Recursive style class: %s", className));
+				}
+			} else {
+				System.err.println(String.format("Warning: Unknown style class: %s", className));
+			}
+		}
+		
+		src.forEach((k, v) -> {
+			if (!PROPKEY_CLASSES.equals(k)) {
+				dst.put(k, v);
+			}
+		});
+	}
+	
+	public static final String PROPKEY_CLASSES = "classes";
 	
 	private static final String FILLER = "";
 	
@@ -1321,6 +1375,316 @@ public enum ReshaperLayout {
 	};
 	
 	public abstract void next(Index vIndex, Index hIndex);
+	
+}
+
+/**
+ * @author 2oLDNncs 20241224
+ */
+public abstract class TextTemplate {
+	
+	private final TextTemplate parent;
+	
+	private final PrintStream out;
+	
+	private String name;
+	
+	private final Map<String, Object> data = new HashMap<>();
+	
+	private final Collection<TextTemplateListener> listeners = new LinkedHashSet<>();
+	
+	protected TextTemplate() {
+		this(stack.isEmpty() ? null : stack.peek());
+	}
+	
+	protected TextTemplate(final PrintStream out) {
+		this(null, out);
+	}
+	
+	protected TextTemplate(final TextTemplate parent) {
+		this(parent, null == parent ? System.out : parent.out);
+	}
+	
+	private TextTemplate(final TextTemplate parent, final PrintStream out) {
+		this.parent = parent;
+		this.out = out;
+		this.setName(UUID.randomUUID().toString());
+		
+		if (this.isRoot()) {
+			this.set(K_NEWLINE, true);
+		}
+	}
+	
+	protected final void addListener(final TextTemplateListener listener) {
+		this.listeners.add(listener);
+	}
+	
+	protected final void removeListener(final TextTemplateListener listener) {
+		this.listeners.remove(listener);
+	}
+	
+	protected final <L extends TextTemplateListener> L findListener(final Class<L> listenerClass) {
+		return this.listeners.stream()
+				.filter(listenerClass::isInstance)
+				.map(listenerClass::cast)
+				.findAny().orElseGet(() -> null);
+	}
+	
+	protected final void set(final String key, final Object val) {
+		this.data.put(key, val);
+	}
+	
+	protected final Object get(final String key) {
+		return this.find(key).get();
+	}
+	
+	protected final Object get(final String key, final Function<String, Object> create) {
+		return this.data.computeIfAbsent(key, create);
+	}
+	
+	protected final Optional<Object> find(final String key) {
+		final var ancestor = this.findAncestor(t -> t.data.containsKey(key));
+		
+		if (null != ancestor) {
+			return Optional.of(ancestor.data.get(key));
+		}
+		
+		return Optional.empty();
+	}
+	
+	protected final String getName() {
+		return this.name;
+	}
+	
+	protected final void setName(final String name) {
+		this.name = Objects.requireNonNull(name);
+	}
+	
+	public final void run() {
+		stack.push(this);
+		
+		try {
+			this.doRun();
+		} finally {
+			stack.pop(this);
+		}
+	}
+	
+	@Override
+	public final String toString() {
+		return String.format("%s[%s]", this.getClass().getSimpleName(), this.getName());
+	}
+	
+	protected void doRun() {
+		//pass
+	}
+	
+	protected final void print(final Object x) {
+		this.beforePrint();
+		this.out.print(x);
+	}
+	
+	protected final void println(final Object x) {
+		this.beforePrint();
+		this.out.println(x);
+		this.afterPrintln();
+	}
+	
+	private final void beforePrint() {
+		if ((boolean) this.getRoot().get(K_NEWLINE)) {
+			this.getRoot().set(K_NEWLINE, false);
+			this.forEachListener(TextTemplateListener::beforeLine);
+		}
+	}
+	
+	private final void afterPrintln() {
+		this.getRoot().set(K_NEWLINE, true);
+		this.forEachListener(TextTemplateListener::afterLine);
+	}
+	
+	private final void forEachListener(final Consumer<TextTemplateListener> action) {
+		new ArrayList<>(this.listeners).forEach(action);
+	}
+	
+	protected final void printf(final String format, final Object... args) {
+		this.print(String.format(format, args));
+	}
+	
+	protected final void printlnf(final String format, final Object... args) {
+		this.println(String.format(format, args));
+	}
+	
+	protected final boolean isRoot() {
+		return null == this.parent;
+	}
+	
+	protected final TextTemplate getRoot() {
+		return this.findAncestor(TextTemplate::isRoot);
+	}
+	
+	protected final TextTemplate getAncestor(final int upCount) {
+		return Objects.requireNonNull(this.findAncestor(upCount));
+	}
+	
+	protected final TextTemplate getAncestor(final String ancestorName) {
+		return Objects.requireNonNull(this.findAncestor(ancestorName));
+	}
+	
+	protected final <T extends TextTemplate> T getAncestor(final Class<T> ancestorClass) {
+		return Objects.requireNonNull(this.findAncestor(ancestorClass));
+	}
+	
+	protected final TextTemplate findAncestor(final int upCount) {
+		return this.findAncestor(new Predicate<>() {
+			
+			private int i = 0;
+			
+			@Override
+			public final boolean test(final TextTemplate t) {
+				this.i += 1;
+				
+				return upCount < i;
+			}
+			
+		});
+	}
+	
+	protected final TextTemplate findAncestor(final String ancestorName) {
+		return this.findAncestor(t -> t.getName().equals(ancestorName));
+	}
+	
+	protected final <T extends TextTemplate> T findAncestor(final Class<T> ancestorClass) {
+		return ancestorClass.cast(this.findAncestor(ancestorClass::isInstance));
+	}
+	
+	protected final TextTemplate findAncestor(final Predicate<TextTemplate> p) {
+		var result = this;
+		
+		while (null != result && !p.test(result)) {
+			result = result.parent;
+		}
+		
+		return result;
+		
+	}
+	
+	private static final String K_NEWLINE = "NEWLINE";
+	
+	private static final MTStack<TextTemplate> stack = new MTStack<>();
+	
+	/**
+	 * @author 2oLDNncs 20241225
+	 *
+	 * @param <T>
+	 */
+	private static final class MTStack<T> {
+		
+		private final Map<Thread, Stack<T>> stacks = new WeakHashMap<>();
+		
+		public final boolean isEmpty() {
+			return this.getStack().isEmpty();
+		}
+		
+		public final void push(final T item) {
+			this.getStack().push(item);
+		}
+		
+		public final T pop() {
+			return this.getStack().pop();
+		}
+		
+		public final void pop(final T item) {
+			if (item != this.pop()) {
+				throw new IllegalStateException();
+			}
+		}
+		
+		public final T peek() {
+			return this.getStack().peek();
+		}
+		
+		public final Stack<T> getStack() {
+			return this.stacks.computeIfAbsent(Thread.currentThread(), __ -> new Stack<>());
+		}
+		
+	}
+	
+}
+
+/**
+ * @author 2oLDNncs 20241225
+ */
+public abstract interface TextTemplateListener {
+	
+	public default void beforeLine() {
+		//pass
+	}
+	
+	public default void afterLine() {
+		//pass
+	}
+	
+}
+
+/**
+ * @author 2oLDNncs 20241225
+ */
+public final class Indentation implements TextTemplateListener {
+	
+	private final TextTemplate context;
+	
+	private String current;
+	
+	private final String delta;
+	
+	public Indentation(final TextTemplate context, final String initial, final String delta) {
+		this.context = context;
+		this.current = initial;
+		this.delta = delta;
+		
+		context.getRoot().addListener(this);
+	}
+	
+	public final String getCurrent() {
+		return this.current;
+	}
+	
+	public final void indent(final Runnable action) {
+		this.indent();
+		
+		try {
+			action.run();
+		} finally {
+			this.outdent();
+		}
+	}
+	
+	public final void indent() {
+		this.current += this.delta;
+	}
+	
+	public final void outdent() {
+		this.current = this.getCurrent().substring(0, this.getCurrent().length() - this.delta.length());
+	}
+	
+	@Override
+	public final void beforeLine() {
+		this.context.print(this.getCurrent());
+	}
+	
+	public static final Indentation get(final TextTemplate context) {
+		return get(context, "", "\t");
+	}
+	
+	public static final Indentation get(final TextTemplate context, final String initial, final String delta) {
+		var result = context.findListener(Indentation.class);
+		
+		if (null == result) {
+			result = new Indentation(context, initial, delta);
+		}
+		
+		return result;
+	}
 	
 }
 
