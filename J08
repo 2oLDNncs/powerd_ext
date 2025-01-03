@@ -1,0 +1,2123 @@
+
+
+
+/**
+ * @author 2oLDNncs 20241028
+ */
+public final class ArgsParser {
+	
+	private String[] args;
+	
+	private final Map<String, Object> map = new HashMap<>();
+	
+	public ArgsParser(final String... args) {
+		this.args = args;
+	}
+	
+	public final void setDefault(final String key, final Object value) {
+		if (null == this.map.get(key)) {
+			this.set(key, value);
+		}
+	}
+	
+	private final void set(final String key, final Object value) {
+		this.map.put(key, Objects.requireNonNull(value));
+	}
+	
+	public final boolean getBoolean(final String key) {
+		return this.get(key);
+	}
+	
+	public final byte getByte(final String key) {
+		return this.get(key);
+	}
+	
+	public final char getChar(final String key) {
+		return this.get(key);
+	}
+	
+	public final short getShort(final String key) {
+		return this.get(key);
+	}
+	
+	public final int getInt(final String key) {
+		return this.get(key);
+	}
+	
+	public final long getLong(final String key) {
+		return this.get(key);
+	}
+	
+	public final double getDouble(final String key) {
+		return this.get(key);
+	}
+	
+	public final String getString(final String key) {
+		return this.get(key);
+	}
+	
+	public final File getFile(final String key) {
+		return new File(this.getString(key));
+	}
+	
+	public final Path getPath(final String key) {
+		return this.getFile(key).toPath();
+	}
+	
+	public final <E extends Enum<?>> E getEnum(final String key) {
+		return this.get(key);
+	}
+	
+	private final void parse() {
+		if (null == this.args) {
+			return;
+		}
+		
+		final String[] args = this.args;
+		this.args = null;
+		
+		int keyIndex = 0;
+		int keyStep;
+		
+		while (keyIndex < args.length) {
+			final String key = args[keyIndex];
+			final Object defaultValue = this.get(key);
+			Object value = "";
+			
+			if (defaultValue instanceof Boolean) {
+				value = !(Boolean) defaultValue;
+				keyStep = 1;
+			} else {
+				final String valueString = args[keyIndex + 1];
+				
+				if (defaultValue instanceof Byte) {
+					value = Byte.parseByte(valueString);
+				} else if (defaultValue instanceof Character) {
+					value = Character.valueOf(valueString.charAt(0));
+				} else if (defaultValue instanceof Short) {
+					value = Short.parseShort(valueString);
+				} else if (defaultValue instanceof Integer) {
+					value = Integer.parseInt(valueString);
+				} else if (defaultValue instanceof Long) {
+					value = Long.parseLong(valueString);
+				} else if (defaultValue instanceof Float) {
+					value = Float.parseFloat(valueString);
+				} else if (defaultValue instanceof Double) {
+					value = Double.parseDouble(valueString);
+				} else if (defaultValue instanceof Enum<?>) {
+					value = parseEnum(cast(defaultValue.getClass()), valueString);
+				} else {
+					value = valueString;
+				}
+				
+				keyStep = 2;
+			}
+			
+			this.set(key, value);
+			
+			keyIndex += keyStep;
+		}
+	}
+	
+	private final <T> T get(final String key) {
+		this.parse();
+		
+		return cast(this.map.get(key));
+	}
+	
+	@SuppressWarnings("unchecked")
+	public static final <E extends Enum<?>> E parseEnum(final Class<E> enumClass, final String prefix) {
+		try {
+			for (final E enumValue : (E[]) enumClass.getMethod("values").invoke(null)) {
+				if (enumValue.toString().startsWith(prefix)) {
+					return enumValue;
+				}
+			}
+		} catch (final Exception e) {
+			throw new RuntimeException(e);
+		}
+		
+		throw new IllegalArgumentException(String.format("Failed to parse %s as %s", prefix, enumClass));
+	}
+	
+}
+
+
+
+/**
+ * @author 2oLDNncs 20241228
+ */
+public abstract class CblTemplate extends TextTemplate {
+	
+	protected final TextTemplateIndenter indt;
+	
+	protected String programId = "HELLO001";
+	
+	protected boolean hasEnvironmentDivision = false;
+	
+	protected boolean hasConfigurationSection = false;
+	
+	protected boolean hasDataDivision = false;
+	
+	protected boolean hasWorkingStorageSection = false;
+	
+	protected boolean hasLocalStorageSection = false;
+	
+	protected boolean hasLinkageSection = false;
+	
+	protected CblTemplate() {
+		super();
+		this.indt = cast(this.getPrinter());
+		this.setup();
+	}
+	
+	protected CblTemplate(final PrintStream out) {
+		super(new TextTemplateIndenter(out, "       ", "    "));
+		this.indt = cast(this.getPrinter());
+		this.setup();
+	}
+	
+	protected void setup() {
+		final Collection<String> declaredMethodNames = Arrays.stream(this.getClass().getDeclaredMethods())
+				.map(Method::getName)
+				.collect(Collectors.toSet());
+		
+		this.hasConfigurationSection = declaredMethodNames.contains(M_printConfigurationSection);
+		this.hasEnvironmentDivision = declaredMethodNames.contains(M_printEnvirontmentDivision)
+				|| this.hasConfigurationSection;
+		
+		this.hasWorkingStorageSection = declaredMethodNames.contains(M_printWorkingStorageSection);
+		this.hasLocalStorageSection = declaredMethodNames.contains(M_printLocalStorageSection);
+		this.hasLinkageSection = declaredMethodNames.contains(M_printLinkageSection);
+		this.hasDataDivision = declaredMethodNames.contains(M_printDataDivision)
+				|| this.hasWorkingStorageSection|| this.hasLocalStorageSection || this.hasLinkageSection;
+	}
+	
+	protected final void setIndicator(final char indicator) {
+		this.indt.setCurrent(replaceCharAt(this.indt.getCurrent(), 6, indicator));
+	}
+	
+	protected final void setIndicator(final char indicator, final Runnable block) {
+		final char saved = this.indt.getCurrent().charAt(6);
+		
+		this.setIndicator(indicator);
+		
+		try {
+			block.run();
+		} finally {
+			this.setIndicator(saved);
+		}
+	}
+	
+	protected void indent(final Runnable block) {
+		((TextTemplateIndenter) this.getPrinter()).indent(block);
+	}
+	
+	@Method_printComment
+	protected void printComment(final String line) {
+		this.setIndicator(INDICATOR_COMMENT, () -> this.println(line));
+	}
+	
+	@Method_printDebug
+	protected void printDebug(final String line) {
+		this.setIndicator(INDICATOR_DEBUG, () -> this.println(line));
+	}
+	
+	@Method_printContinuation
+	protected void printContinuation(final String line) {
+		this.setIndicator(INDICATOR_CONTINUATION, () -> this.println(line));
+	}
+	
+	@Override
+	protected final void doRun() {
+		this.printIdentificationDivision();
+		
+		if (this.indt.getCurrent().isEmpty()) {
+			throw new IllegalStateException();
+		}
+		
+		if (this.hasEnvironmentDivision) {
+			this.printEnvironmentDivision();
+		}
+		
+		if (this.hasDataDivision) {
+			this.printDataDivision();
+		}
+		
+		this.printProcedureDivision();
+		
+		this.printEndProgram();
+		
+		this.printNextPrograms();
+	}
+	
+	@Method_printIdentificationDivision
+	protected void printIdentificationDivision() {
+		this.printFullLine(SEPARATOR_LINE);
+		this.println("IDENTIFICATION DIVISION.");
+		this.printFullLine(SEPARATOR_LINE);
+		this.println("");
+		
+		this.printlnf("PROGRAM-ID. %s.", this.programId);
+		this.println("");
+	}
+	
+	@Method_printEnvironmentDivision
+	protected void printEnvironmentDivision() {
+		this.printFullLine(SEPARATOR_LINE);
+		this.println("ENVIRONMENT DIVISION.");
+		this.printFullLine(SEPARATOR_LINE);
+		this.println("");
+		
+		if (this.hasConfigurationSection) {
+			this.printConfigurationSection();
+		}
+	}
+	
+	@Method_printConfigurationSection
+	protected void printConfigurationSection() {
+		this.printFullLine(SEPARATOR_LINE);
+		this.println("CONFIGURATION SECTION.");
+		this.printFullLine(SEPARATOR_LINE);
+		this.println("");
+		
+		this.printComment("SOURCE-COMPUTER. IBM WITH DEBUGGING MODE.");
+		this.println("");
+	}
+	
+	@Method_printDataDivision
+	protected void printDataDivision() {
+		this.printFullLine(SEPARATOR_LINE);
+		this.println("DATA DIVISION.");
+		this.printFullLine(SEPARATOR_LINE);
+		this.println("");
+		
+		if (this.hasWorkingStorageSection) {
+			this.printWorkingStorageSection();
+		}
+		
+		if (this.hasLocalStorageSection) {
+			this.printLocalStorageSection();
+		}
+		
+		if (this.hasLinkageSection) {
+			this.printLinkageSection();
+		}
+	}
+	
+	@Method_printWorkingStorageSection
+	protected void printWorkingStorageSection() {
+		this.printFullLine(SEPARATOR_LINE);
+		this.println("WORKING-STORAGE SECTION.");
+		this.printFullLine(SEPARATOR_LINE);
+		this.println("");
+	}
+	
+	@Method_printLocalStorageSection
+	protected void printLocalStorageSection() {
+		this.printFullLine(SEPARATOR_LINE);
+		this.println("LOCAL-STORAGE SECTION.");
+		this.printFullLine(SEPARATOR_LINE);
+		this.println("");
+	}
+	
+	@Method_printLinkageSection
+	protected void printLinkageSection() {
+		this.printFullLine(SEPARATOR_LINE);
+		this.println("LINKAGE SECTION.");
+		this.printFullLine(SEPARATOR_LINE);
+		this.println("");
+	}
+	
+	@Method_printProcedureDivision
+	protected void printProcedureDivision() {
+		this.printFullLine(SEPARATOR_LINE);
+		this.println("PROCEDURE DIVISION.");
+		this.printFullLine(SEPARATOR_LINE);
+		
+		this.indent(() -> {
+			this.printProcedureCode();
+			this.println(".");
+		});
+		
+		this.println("");
+		
+		this.printParagraphs();
+		
+		this.printNestedPrograms();
+	}
+	
+	protected void printProcedureCode() {
+		this.println("DISPLAY 'Hello World.'");
+		this.println("GOBACK");
+	}
+	
+	protected void printParagraphs() {
+		//pass
+	}
+	
+	protected void printNestedPrograms() {
+		//pass
+	}
+	
+	protected void printParagraph(final String paragraphName, final Runnable block) {
+		this.printFullLine(SEPARATOR_LINE);
+		this.printlnf("%s.", paragraphName);
+		this.printFullLine(SEPARATOR_LINE);
+		
+		this.indent(() -> {
+			block.run();
+			this.println(".");
+		});
+		
+		this.println("");
+	}
+	
+	@Method_printEndProgram
+	protected void printEndProgram() {
+		this.printFullLine(SEPARATOR_LINE);
+		this.printlnf("END PROGRAM %s.", this.programId);
+		this.printFullLine(SEPARATOR_LINE);
+		this.println("");
+	}
+	
+	protected void printNextPrograms() {
+		//pass
+	}
+	
+	@Method_printFullLine
+	protected void printFullLine(final String line) {
+		final String saved = this.indt.getCurrent();
+		
+		this.indt.setCurrent("");
+		
+		try {
+			this.println(line);
+		} finally {
+			this.indt.setCurrent(saved);
+		}
+	}
+	
+	protected static final String CBL_COLS       = "----+-*--1----+----2----+----3----+----4----+----5----+----6----+----7--";
+	protected static final String SEPARATOR_LINE = "      *=================================================================";
+	protected static final char INDICATOR_NONE         = ' ';
+	protected static final char INDICATOR_CONTINUATION = '-';
+	protected static final char INDICATOR_COMMENT      = '*';
+	protected static final char INDICATOR_DEBUG        = 'D';
+	
+	public static final String M_printFullLine = getMethodName(
+			CblTemplate.class, Method_printFullLine.class);
+	public static final String M_printComment = getMethodName(
+			CblTemplate.class, Method_printComment.class);
+	public static final String M_printDebug = getMethodName(
+			CblTemplate.class, Method_printDebug.class);
+	public static final String M_printContinuation = getMethodName(
+			CblTemplate.class, Method_printContinuation.class);
+	public static final String M_printIdentificationDivision = getMethodName(
+			CblTemplate.class, Method_printIdentificationDivision.class);
+	public static final String M_printEnvirontmentDivision = getMethodName(
+			CblTemplate.class, Method_printEnvironmentDivision.class);
+	public static final String M_printConfigurationSection = getMethodName(
+			CblTemplate.class, Method_printConfigurationSection.class);
+	public static final String M_printDataDivision = getMethodName(
+			CblTemplate.class, Method_printDataDivision.class);
+	public static final String M_printWorkingStorageSection = getMethodName(
+			CblTemplate.class, Method_printWorkingStorageSection.class);
+	public static final String M_printLocalStorageSection = getMethodName(
+			CblTemplate.class, Method_printLocalStorageSection.class);
+	public static final String M_printLinkageSection = getMethodName(
+			CblTemplate.class, Method_printLinkageSection.class);
+	public static final String M_printProcedureDivision = getMethodName(
+			CblTemplate.class, Method_printProcedureDivision.class);
+	public static final String M_printEndProgram = getMethodName(
+			CblTemplate.class, Method_printEndProgram.class);
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_printFullLine {
+		//pass
+	}
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_printComment {
+		//pass
+	}
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_printDebug {
+		//pass
+	}
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_printContinuation {
+		//pass
+	}
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_printIdentificationDivision {
+		//pass
+	}
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_printEnvironmentDivision {
+		//pass
+	}
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_printConfigurationSection {
+		//pass
+	}
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_printDataDivision {
+		//pass
+	}
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_printWorkingStorageSection {
+		//pass
+	}
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_printLocalStorageSection {
+		//pass
+	}
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_printLinkageSection {
+		//pass
+	}
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_printProcedureDivision {
+		//pass
+	}
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_printEndProgram {
+		//pass
+	}
+	
+}
+
+
+
+/**
+ * @author 2oLDNncs 20240804
+ */
+public final class GraphvizPrinter {
+	
+	private final PrintStream out;
+	
+	private final Map<List<String>, Map<String, String>> nodeProps = new LinkedHashMap<>();
+	private final Map<List<Integer>, Map<String, String>> arcProps = new LinkedHashMap<>();
+	private final Map<String, Map<String, String>> classProps = new LinkedHashMap<>();
+	private final Map<List<String>, Integer> nodeIds = new LinkedHashMap<>();
+	private final Map<String, Object> clusters = new LinkedHashMap<>();
+	private final Collection<List<Integer>> arcs = new ArrayList<>();
+	
+	private int expectedArcElementsLength = -1;
+	private int nodePropLineNumber = 1;
+	private int arcPropLineNumber = 1;
+	private int arcLineNumber = 1;
+	
+	public GraphvizPrinter(final PrintStream out) {
+		this.out = out;
+	}
+	
+	/**
+	 * Call <code>begin(<br>
+	 * 	true,  // strict, to merge duplicate edges<br>
+	 *  "dot", // dot layout, to allow clustering<br>
+	 *  true,  // compound, to allow edges between clusters<br>
+	 *  "TB"   // Top Down direction
+	 * )</code>
+	 */
+	public final void begin() {
+		this.begin(true, "dot", true, "TB");
+	}
+	
+	/**
+	 * @param strict If true, merge duplicate edges
+	 * @param layout
+	 * @param compound If true, allow edges between clusters
+	 * @param rankdir
+	 */
+	public final void begin(final boolean strict, final String layout, final boolean compound, final String rankdir) {
+		this.out.println(String.format("%sdigraph G { // Use strict to merge duplicate edges", strict ? "strict " : ""));
+		this.out.println(String.format("	layout=%s // Use dot for clustering", layout));
+		this.out.println(String.format("	compound=%s // If true, allow edges between clusters", compound));
+		this.out.println(String.format("	rankdir=%s // TB or LR", rankdir));
+	}
+	
+	/**
+	 * @param nodePropElements an array of length N+2:
+	 * [nodeParts[0], ..., nodeParts[N-1], propKey, propVal]
+	 */
+	public final void processNodeProp(final String... nodePropElements) {
+		final List<String> node = this.toNode(String.format("Node prop line %s", this.nodePropLineNumber),
+				Arrays.copyOf(nodePropElements, nodePropElements.length - 2));
+		
+		this.addNode(node);
+		
+		final String propKey = nodePropElements[nodePropElements.length - 2];
+		final String propVal = nodePropElements[nodePropElements.length - 1];
+		
+		setObjProp(this.nodeProps, node, propKey, propVal);
+		
+		this.nodePropLineNumber += 1;
+	}
+	
+	/**
+	 * @param classPropElements an array of length 3:
+	 * [className, propKey, propVal]
+	 */
+	public final void processClassProp(final String... classPropElements) {
+		final String className = classPropElements[0];
+		final String propKey = classPropElements[1];
+		final String propVal = classPropElements[2];
+		
+		setObjProp(this.classProps, className, propKey, propVal);
+	}
+	
+	/**
+	 * @param arcPropElements an array of length 2*N+2:
+	 * [tailNodeParts[0], ..., tailNodeParts[N-1], headNodeParts[0], ..., headNodeParts[N-1], propKey, propVal]
+	 */
+	public final void processArcProp(final String... arcPropElements) {
+		final List<Integer> arc = this.toArc(String.format("Arc prop line %s", this.arcPropLineNumber),
+				Arrays.copyOf(arcPropElements, arcPropElements.length - 2));
+		final String propKey = arcPropElements[arcPropElements.length - 2];
+		final String propVal = arcPropElements[arcPropElements.length - 1];
+		
+		setObjProp(this.arcProps, arc, propKey, propVal);
+		
+		this.arcPropLineNumber += 1;
+	}
+	
+	/**
+	 * @param arcElements an array of length 2*N:
+	 * [tailNodeParts[0], ..., tailNodeParts[N-1], headNodeParts[0], ..., headNodeParts[N-1]]
+	 */
+	public final void processArc(final String... arcElements) {
+		this.arcs.add(this.toArc(String.format("Arc line %s", this.arcLineNumber), arcElements));
+		
+		this.arcLineNumber += 1;
+	}
+	
+	public final void end() {
+		this.printArcs();
+		this.printClusters();
+		
+		this.out.println("}");
+	}
+	
+	private final List<String> toNode(final String context, final String[] nodeElements) {
+		if (this.expectedArcElementsLength < 0) {
+			this.expectedArcElementsLength = 2 * nodeElements.length;
+		}
+		
+		if (this.expectedArcElementsLength / 2 != nodeElements.length) {
+			throw new IllegalArgumentException(String.format("%s: Wrong number of elements (expected: %s, actual: %s)",
+					context,
+					this.expectedArcElementsLength / 2,
+					nodeElements.length));
+		}
+		
+		return Arrays.asList(nodeElements);
+	}
+	
+	private final List<Integer> toArc(final String context, final String[] arcElements) {
+		if (0 != (arcElements.length & 1)) {
+			throw new IllegalArgumentException(String.format("%s: Odd number of elements", context));
+		}
+		
+		if (this.expectedArcElementsLength < 0) {
+			this.expectedArcElementsLength = arcElements.length;
+		}
+		
+		if (this.expectedArcElementsLength != arcElements.length) {
+			throw new IllegalArgumentException(String.format("%s: Wrong number of elements (expected: %s, actual: %s)",
+					context, this.expectedArcElementsLength, arcElements.length));
+		}
+		
+		final List<String> tail = Arrays.asList(Arrays.copyOfRange(arcElements, 0, arcElements.length / 2));
+		final List<String> head = Arrays.asList(Arrays.copyOfRange(arcElements, arcElements.length / 2, arcElements.length));
+		
+		this.addNode(tail);
+		this.addNode(head);
+		
+		final Integer tailId = this.nodeIds.get(tail);
+		final Integer headId = this.nodeIds.get(head);
+		
+		return Arrays.asList(tailId, headId);
+	}
+	
+	private void addNode(final List<String> node) {
+		this.updateNodeIds(node);
+		this.updateClusters(node);
+	}
+	
+	private final void updateNodeIds(final List<String> node) {
+		for (int i = 0; i < node.size(); i += 1) {
+			this.nodeIds.computeIfAbsent(keepLeft(node, i, FILLER), __ -> 1 + this.nodeIds.size());
+		}
+	}
+	
+	private final void printArcs() {
+		this.arcs.forEach(arc -> {
+			final Integer tailId = arc.get(0);
+			final Integer headId = arc.get(1);
+			final Map<String, String> props = Collections.emptyMap();
+			
+			this.applyProps(this.arcProps.getOrDefault(arc, Collections.emptyMap()), props);
+			
+			// It is possible to use ltail and lhead all the time
+			// When the node is an actual cluster node, Graphviz will clip the edges appropriately
+			// Otherwise, the nodes are connected as usual
+			this.out.println(String.format("	%s -> %s [ltail=cluster_%s,lhead=cluster_%s,%s]",
+					tailId, headId, tailId, headId, formatProps(props)));
+		});
+	}
+	
+	private final void printClusters() {
+		final List<String> node = new ArrayList<>(Collections.nCopies(this.expectedArcElementsLength / 2, FILLER));
+		
+		this.printClusters(this.clusters, node, 0, "\t");
+	}
+	
+	private final void printClusters(final Map<String, Object> clusters,
+			final List<String> node, final int i, final String indent) {
+		clusters.forEach((k, v) -> {
+			node.set(i, k);
+			final Integer nodeId = Objects.requireNonNull(this.nodeIds.get(node));
+			final Map<String, String> props = new LinkedHashMap<>(mapOf("label", k));
+			
+			this.applyProps(this.nodeProps.getOrDefault(node, Collections.emptyMap()), props);
+			
+			if (i + 1 < node.size()) {
+				// Graphviz doc: Clusters are encoded as subgraphs whose names have the prefix 'cluster'.
+				this.out.println(String.format("%ssubgraph cluster_%s {", indent, nodeId));
+				
+				props.forEach((propK, propV) -> {
+					this.out.println(String.format("%s	%s=%s", indent, propK, formatPropValue(propV)));
+				});
+				
+				// This is a trick to get a node that can be used to connect to/from the whole cluster using ltail and lhead
+				// FIXME This invisible node actually gets positioned somewhere next to the visible ones,
+				//       so the incoming and outgoing edges aren't aimed at the center of the cluster : how to fix this?
+				//       We can add invisible edges from the invisible cluster node to force its rank,
+				//       but the result looks weird (hard to describe, the invisible nodes affect the global layout)
+				this.out.println(String.format("%s	%s [label=\"\",shape=point,width=0,height=0]", indent, nodeId));
+				
+				this.printClusters(cast(v), node, i + 1, indent + "\t");
+				
+				this.out.println(String.format("%s}", indent));
+			} else if (!"".equals(k)) { // To avoid duplicates, don't print an additional node if the leaf matches a cluster node
+				this.out.println(String.format("%s%s [%s]",
+						indent, nodeId, formatProps(props)));
+			}
+			
+			node.set(i, FILLER);
+		});
+	}
+	
+	private final void updateClusters(final List<String> node) {
+		Map<String, Object> c = this.clusters;
+		
+		for (int i = 0; i + 1 < node.size(); i += 1) {
+			c = cast(c.computeIfAbsent(node.get(i), __ -> new LinkedHashMap<>()));
+		}
+		
+		c.put(node.get(node.size() - 1), null);
+	}
+	
+	private final void applyProps(final Map<String, String> src, final Map<String, String> dst) {
+		this.applyProps(src, dst, new HashSet<>());
+	}
+	
+	private final void applyProps(final Map<String, String> src, final Map<String, String> dst, final Collection<String> done) {
+		for (final String className : src.getOrDefault(PROPKEY_CLASSES, ",").split(",")) {
+			final Map<String, String> classProps = this.classProps.get(className);
+			
+			if (null != classProps) {
+				if (done.add(className)) {
+					this.applyProps(classProps, dst, done);
+				} else {
+					System.err.println(String.format("Warning: Recursive style class: %s", className));
+				}
+			} else {
+				System.err.println(String.format("Warning: Unknown style class: %s", className));
+			}
+		}
+		
+		src.forEach((k, v) -> {
+			if (!PROPKEY_CLASSES.equals(k)) {
+				dst.put(k, v);
+			}
+		});
+	}
+	
+	public static final String PROPKEY_CLASSES = "classes";
+	
+	private static final String FILLER = "";
+	
+	private static final <E> List<E> keepLeft(final List<E> elements, final int n, final E filler) {
+		final List<E> result = new ArrayList<>(elements);
+		
+		Collections.fill(result.subList(n + 1, result.size()), filler);
+		
+		return result;
+	}
+	
+	private static final <K> void setObjProp(final Map<K, Map<String, String>> props,
+			final K obj, final String propKey, final String propVal) {
+		props.computeIfAbsent(obj, __ -> new LinkedHashMap<>()).put(propKey, propVal);
+	}
+	
+	private static final String formatProps(final Map<String, String> props) {
+		return String.join(",", props.entrySet().stream()
+				.map(e -> String.format("%s=%s", e.getKey(), formatPropValue(e.getValue())))
+				.toArray(String[]::new));
+	}
+	
+	private static final String formatPropValue(final String value) {
+		if (value.startsWith("<") && value.endsWith(">")) {
+			return value;
+		}
+		
+		return String.format("\"%s\"", value);
+	}
+	
+	private static final <K, V> Map<K, V> mapOf(final Object... kvPairs) {
+		final Map<K, V> result = new HashMap<>();
+		
+		for (int i = 0; i < kvPairs.length; i += 2) {
+			result.put(cast(kvPairs[i]), cast(kvPairs[i + 1]));
+		}
+		
+		return result;
+	}
+	
+}
+
+
+/**
+ * @author 2oLDNncs 20241030
+ */
+public final class GroupReplacer implements UnaryOperator<String> {
+	
+	private final Pattern pattern;
+	
+	private final IntFunction<String> replacer;
+	
+	public GroupReplacer(final Pattern pattern, final IntFunction<String> replacer) {
+		this.pattern = pattern;
+		this.replacer = replacer;
+	}
+	
+	@Override
+	public final String apply(final String input) {
+		final Matcher matcher = this.pattern.matcher(input);
+		final StringBuilder result = new StringBuilder();
+		int i = 0;
+		
+		while (matcher.find()) {
+			result.append(input.substring(i, matcher.start()));
+			result.append(this.replacer.apply(groupIndex(matcher)));
+			i = matcher.end();
+		}
+		
+		result.append(input.substring(i));
+		
+		return result.toString();
+	}
+	
+	public static final int groupIndex(final Matcher matcher) {
+		for (int i = 1; i <= matcher.groupCount(); i += 1) {
+			if (null != matcher.group(i)) {
+				return i;
+			}
+		}
+		
+		return 0;
+	}
+	
+}
+
+
+/**
+ * @author 2oLDNncs 20241030
+ */
+public final class GroupReplacerBuilder {
+	
+	private final List<String> groups = new ArrayList<>();
+	
+	private final List<String> replacements = new ArrayList<>();
+	
+	public final void addReplacement(final String key, final String replacement) {
+		final String group = String.format("(%s)", Pattern.quote(key));
+		
+		if (this.groups.contains(group)) {
+			throw new IllegalArgumentException(String.format("Duplicate replacement key: %s", key));
+		}
+		
+		groups.add(group);
+		replacements.add(replacement);
+	}
+	
+	public final GroupReplacer build() {
+		return new GroupReplacer(
+				Pattern.compile(String.join("|", this.groups)),
+				i -> this.replacements.get(i - 1));
+	}
+	
+}
+
+
+/**
+ * @author 2oLDNncs 20241228
+ */
+public final class Helpers {
+	
+	@SuppressWarnings("unchecked")
+	public static final <T> T cast(final Object object) {
+		return (T) object;
+	}
+	
+	public static final String replaceCharAt(final String s, final int i, final char c) {
+		return String.format("%s%s%s", s.substring(0, i), c, s.substring(i + 1));
+	}
+	
+	public static final String getMethodName(final Class<?> cls, final Class<? extends Annotation> annotation) {
+		return Arrays.stream(cls.getDeclaredMethods())
+				.filter(m -> m.isAnnotationPresent(annotation))
+				.findAny().get().getName();
+	}
+	
+}
+
+/**
+ * @author 2oLDNncs 20241108
+ */
+public final class Index {
+	
+	private int value;
+	
+	private final int step;
+	
+	private final int end;
+	
+	public Index(final int end) {
+		this(1, end);
+	}
+	
+	public Index(final int step, final int end) {
+		this.step = step;
+		this.end = end;
+	}
+	
+	public final int getValue() {
+		return this.value;
+	}
+	
+	public final void setValue(final int value) {
+		if (value < 0) {
+			throw new IllegalArgumentException();
+		}
+		
+		this.value = value;
+	}
+	
+	public final int getStep() {
+		return this.step;
+	}
+	
+	public final int getEnd() {
+		return this.end;
+	}
+	
+	public final boolean isValid() {
+		return this.getValue() < this.getEnd();
+	}
+	
+	public final void incr() {
+		this.incr(this.getStep());
+	}
+	
+	public final void incr(final int delta) {
+		this.setValue(this.getValue() + delta);
+	}
+	
+	public final boolean next() {
+		return this.next(this.getStep());
+	}
+	
+	public final boolean next(final int delta) {
+		this.incr(delta);
+		
+		if (this.getValue() < this.getEnd()) {
+			return true;
+		}
+		
+		this.setValue(0);
+		
+		return false;
+	}
+	
+	public final void next(final Index iNext) {
+		if (!this.next()) {
+			iNext.incr();
+		}
+	}
+	
+}
+
+
+/**
+ * @author 2oLDNncs 20241229
+ */
+public abstract class JavaTemplate extends TextTemplate {
+	
+	protected String author = this.getClass().getName();
+	
+	protected String generatedClassName = "MyClass";
+	
+	protected Visibility visibility = Visibility.PUBLIC;
+	
+	protected Class<?> superClass = null;
+	
+	public JavaTemplate() {
+		super();
+	}
+	
+	public JavaTemplate(final TextTemplatePrinter printer) {
+		super(printer);
+	}
+	
+	@Override
+	protected void doRun() {
+		this.println("");
+		this.printImports();
+		this.println("");
+		
+		this.println("/**");
+		this.printlnf(" * @author %s %s",
+				this.author,
+				DateTimeFormatter.BASIC_ISO_DATE.format(LocalDate.now()));
+		this.println(" */");
+		
+		this.printf("%s final class %s", this.visibility.getString(), this.generatedClassName);
+		
+		if (null != this.superClass) {
+			this.printf(" extends %s", this.superClass.getSimpleName());
+		}
+		
+		this.printBlock(this::printClassContents);
+	}
+	
+	protected void indent(final Runnable block) {
+		((TextTemplateIndenter) this.getPrinter()).indent(block);
+	}
+	
+	protected void indent() {
+		((TextTemplateIndenter) this.getPrinter()).indent();
+	}
+	
+	protected void outdent() {
+		((TextTemplateIndenter) this.getPrinter()).outdent();
+	}
+	
+	protected void printBlock(final Runnable block) {
+		this.println(" {");
+		this.indent(block);
+		this.println("}");
+		this.println("");
+	}
+	
+	protected void printImports() {
+		if (null != this.superClass) {
+			this.printlnf("import %s;", this.superClass.getName());
+		}
+	}
+	
+	protected void printClassContents() {
+		this.println("");
+		this.printMemberAttributes();
+		this.printConstructors();
+		this.printMemberMethods();
+		this.printClassAttributes();
+		this.printClassMethods();
+	}
+	
+	protected void printMemberAttributes() {
+		//pass
+	}
+	
+	protected void printConstructors() {
+		//pass
+	}
+	
+	protected void printMemberMethods() {
+		//pass
+	}
+	
+	protected void printClassAttributes() {
+		//pass
+	}
+	
+	protected void printClassMethods() {
+		//pass
+	}
+	
+	/**
+	 * @author 2oLDNncs 20241231
+	 */
+	public static enum Visibility {
+		
+		PUBLIC, PACKAGE(""), PROTECTED, PRIVATE;
+		
+		private final String string;
+		
+		private Visibility() {
+			this(null);
+		}
+		
+		private Visibility(final String string) {
+			this.string = null == string ? (this.toString().toLowerCase() + " ") : string;
+		}
+		
+		public final String getString() {
+			return this.string;
+		}
+		
+	}
+	
+}
+
+
+/**
+ * @author 2oLDNncs 20240608
+ *
+ * @param <V>
+ */
+public final class OrientedGraph<V> implements Serializable {
+	
+	private final Map<V, Collection<V>> tailHeads = newMap();
+	
+	private final Map<V, Collection<V>> headTails = newMap();
+	
+	private final boolean transitive;
+	
+	public OrientedGraph(final boolean transitive) {
+		this.transitive = transitive;
+	}
+	
+	public final boolean isTransitive() {
+		return this.transitive;
+	}
+	
+	public final void connect(final V tail, final V head) {
+		this.addArc(tail, head);
+		
+		if (this.isTransitive()) {
+			this.applyTransitivity(tail, head);
+		}
+	}
+	
+	public final Collection<V> getHeads(final V tail) {
+		return this.tailHeads.getOrDefault(tail, Collections.emptySet());
+	}
+	
+	public final Collection<V> getTails(final V head) {
+		return this.headTails.getOrDefault(head, Collections.emptySet());
+	}
+	
+	public final boolean isArc(final V tail, final V head) {
+		return this.getHeads(tail).contains(head);
+	}
+	
+	public final Collection<V> getAllTails() {
+		return this.tailHeads.keySet();
+	}
+	
+	public final Collection<V> getAllHeads() {
+		return this.headTails.keySet();
+	}
+	
+	public final Collection<V> getVertices() {
+		return plus(this.getAllTails(), this.getAllHeads());
+	}
+	
+	public final Collection<V> getRoots() {
+		return minus(this.getAllTails(), this.getAllHeads());
+	}
+	
+	public final Collection<V> getLeaves() {
+		return minus(this.getAllHeads(), this.getAllTails());
+	}
+	
+	public final void forEachArc(final BiConsumer<V, V> action) {
+		newMap(this.tailHeads).forEach((tail, heads) -> {
+			newList(heads).forEach(head -> {
+				action.accept(tail, head);
+			});
+		});
+	}
+	
+	public final void forEachMaxArc(final BiConsumer<V, V> action) {
+		final Collection<V> leaves = this.getLeaves();
+		
+		this.getRoots().forEach(root -> {
+			this.getHeads(root).stream()
+			.filter(leaves::contains)
+			.forEach(leaf -> {
+				action.accept(root, leaf);
+			});
+		});
+	}
+	
+	public final void forEachMaxPath(final Consumer<List<V>> action) {
+		this.getRoots().forEach(root -> {
+			this.forEachPathFrom(root, action);
+		});
+	}
+	
+	public final void forEachPathFrom(final V head, final Consumer<List<V>> action) {
+		this.new OutgoingPathFinder().forEachPath(head, action);
+	}
+	
+	public final void forEachPathTo(final V tail, final Consumer<List<V>> action) {
+		this.new IncomingPathFinder().forEachPath(tail, action);
+	}
+	
+	private final void addArc(final V tail, final V head) {
+		add(this.tailHeads, tail, head);
+		add(this.headTails, head, tail);
+	}
+	
+	private final void applyTransitivity(final V tail, final V head) {
+		final List<V> predecessors = newList(this.getTails(tail));
+		final List<V> successors = newList(this.getHeads(head));
+		
+		predecessors.forEach(p -> {
+			this.addArc(p, head);
+		});
+		
+		successors.forEach(s -> {
+			this.addArc(tail, s);
+		});
+		
+		predecessors.forEach(p -> {
+			successors.forEach(s -> {
+				this.addArc(p, s);
+			});
+		});
+	}
+	
+	/**
+	 * @author 2oLDNncs 20240621
+	 */
+	private final class OutgoingPathFinder extends PathFinder<V> {
+		
+		public OutgoingPathFinder() {
+			super(OrientedGraph.this.getLeaves());
+		}
+		
+		@Override
+		protected final Object[] getCycleExceptionMessageArgs(final Object path, final Object vertex) {
+			return new Object[] { path, vertex };
+		}
+		
+		@Override
+		protected final Collection<V> getNextVertices(V origin) {
+			return OrientedGraph.this.getHeads(origin);
+		}
+		
+		@Override
+		protected final int getInsertionIndex(final int pathSize) {
+			return pathSize;
+		}
+		
+		@Override
+		protected final int getRemovalIndex(final int pathSize) {
+			return pathSize - 1;
+		}
+		
+		private static final long serialVersionUID = -2004507300852730885L;
+		
+	}
+	
+	/**
+	 * @author 2oLDNncs 20240621
+	 */
+	private final class IncomingPathFinder extends PathFinder<V> {
+		
+		public IncomingPathFinder() {
+			super(OrientedGraph.this.getRoots());
+		}
+		
+		@Override
+		protected final Object[] getCycleExceptionMessageArgs(final Object path, final Object vertex) {
+			return new Object[] { vertex, path };
+		}
+		
+		@Override
+		protected final Collection<V> getNextVertices(V origin) {
+			return OrientedGraph.this.getTails(origin);
+		}
+		
+		@Override
+		protected final int getInsertionIndex(final int pathSize) {
+			return 0;
+		}
+		
+		@Override
+		protected final int getRemovalIndex(final int pathSize) {
+			return 0;
+		}
+		
+		private static final long serialVersionUID = -1342815930328295026L;
+		
+	}
+	
+	private static final long serialVersionUID = 7797977345376468869L;
+	
+	private static final <K, V> boolean add(final Map<K, Collection<V>> arcs, final K tail, final V head) {
+		return arcs.computeIfAbsent(tail, __ -> newSet()).add(head);
+	}
+	
+	private static final <E> Collection<E> binop(final BiConsumer<Collection<E>, Collection<E>> op,
+			final Collection<E> a, final Collection<E> b) {
+		final Collection<E> result = newSet(a);
+		
+		op.accept(result, b);
+		
+		return result;
+	}
+	
+	private static final <E> Collection<E> plus(final Collection<E> a, final Collection<E> b) {
+		return binop(Collection::addAll, a, b);
+	}
+	
+	private static final <E> Collection<E> minus(final Collection<E> a, final Collection<E> b) {
+		return binop(Collection::removeAll, a, b);
+	}
+	
+	static final <E> List<E> newList() {
+		return new ArrayList<>();
+	}
+	
+	private static final <E> List<E> newList(final Collection<E> source) {
+		return new ArrayList<>(source);
+	}
+	
+	private static final <K, V> Map<K, V> newMap() {
+		return new HashMap<>();
+	}
+	
+	private static final <K, V> Map<K, V> newMap(final Map<K, V> source) {
+		return new HashMap<>(source);
+	}
+	
+	private static final <E> Collection<E> newSet() {
+		return new HashSet<>();
+	}
+	
+	private static final <E> Collection<E> newSet(final Collection<E> source) {
+		return new HashSet<>(source);
+	}
+	
+	/**
+	 * @author 2oLDNncs 20240621
+	 *
+	 * @param <V>
+	 */
+	private static abstract class PathFinder<V> implements Serializable {
+		
+		private final List<V> path = newList();
+		
+		private final Collection<V> ends;
+		
+		protected PathFinder(final Collection<V> ends) {
+			this.ends = ends;
+		}
+		
+		public final void forEachPath(final V anchor, final Consumer<List<V>> action) {
+			this.begin(anchor);
+			
+			this.getNextVertices(anchor).forEach(v -> {
+				this.forEachPath(v, action);
+			});
+			
+			this.end(action);
+		}
+		
+		protected abstract Object[] getCycleExceptionMessageArgs(Object path, Object vertex);
+		
+		protected abstract Collection<V> getNextVertices(V origin);
+		
+		protected abstract int getInsertionIndex(int pathSize);
+		
+		protected abstract int getRemovalIndex(int pathSize);
+		
+		private final void begin(final V vertex) {
+			if (this.path.contains(vertex)) {
+				throw new IllegalStateException(
+						String.format("Cycle detected : %s -> %s",
+								this.getCycleExceptionMessageArgs(this.path, vertex)));
+			}
+			
+			this.path.add(this.getInsertionIndex(this.path.size()), vertex);
+		}
+		
+		private final void end(final Consumer<List<V>> action) {
+			final int i = this.getRemovalIndex(this.path.size());
+			final V e = this.path.get(i);
+			
+			if (this.ends.contains(e)) {
+				action.accept(this.path);
+			}
+			
+			this.path.remove(i);
+		}
+		
+		private static final long serialVersionUID = -2445477282075393002L;
+		
+	}
+	
+}
+
+
+/**
+ * @author 2oLDNncs 20241108
+ */
+public final class Reshaper {
+	
+	private final int inputPageWidth;
+	
+	private final ReshaperLayout inputLayout;
+	
+	private final List<List<String>> data = new ArrayList<>();
+	
+	private final Index inputLineIndexInPage;
+	
+	private final Index inputPageVerticalIndex;
+	
+	private final Index inputPageHorizontalIndex;
+	
+	public Reshaper(final int inputPageWidth, final int inputPageHeight,
+			final ReshaperLayout inputLayout, final int inputLayoutStride) {
+		this.inputPageWidth = inputPageWidth;
+		this.inputLineIndexInPage = new Index(inputPageHeight);
+		this.inputLayout = inputLayout;
+		this.inputPageVerticalIndex = new Index(inputLayoutStride);
+		this.inputPageHorizontalIndex = new Index(inputLayoutStride);
+	}
+	
+	private final String formatDataRowElement(final String element) {
+		return String.format("%-" + this.inputPageWidth + "." + this.inputPageWidth + "s", element);
+	}
+	
+	public static final int to1D(final Index i0, final Index i1) {
+		return i1.getValue() + i0.getValue() * i1.getEnd();
+	}
+	
+	public final void addInputLine(final String inputLine) {
+		final int r = to1D(this.inputPageVerticalIndex, this.inputLineIndexInPage);
+		final int c = this.inputPageHorizontalIndex.getValue();
+		
+		growToIndex(this.data, r, __ -> new ArrayList<>());
+		growToIndex(this.data.get(r), c, __ -> this.formatDataRowElement(""));
+		
+		this.data.get(r).set(c, this.formatDataRowElement(inputLine));
+		
+		if (!this.inputLineIndexInPage.next()) {
+			this.inputLayout.next(this.inputPageVerticalIndex, this.inputPageHorizontalIndex);
+		}
+	}
+	
+	public static final <E> void growToIndex(final List<E> list,
+			final int targetIndex, final IntFunction<E> elementSupplier) {
+		growToSize(list, targetIndex + 1, elementSupplier);
+	}
+	
+	public static final <E> void growToSize(final Collection<E> collection,
+			final int targetSize, final IntFunction<E> elementSupplier) {
+		int n = collection.size();
+		
+		while (n < targetSize) {
+			collection.add(elementSupplier.apply(n));
+			n = collection.size();
+		}
+	}
+	
+	public final void printTo(final PrintStream out) {
+		this.checkData();
+		
+		this.data.stream()
+		.map(row -> String.join("", row))
+		.forEach(out::println);
+	}
+	
+	public final void printTo(final PrintStream out,
+			final int outputPageWidth, final int outputPageHeight, final ReshaperLayout outputLayout) {
+		this.checkData();
+		
+		final Page page = this.new Page(outputPageWidth, outputPageHeight, outputLayout);
+		
+		while (page.isValid()) {
+			page.printTo(out);
+			page.next();
+		}
+	}
+	
+	final int getDataWidth() {
+		return addLengths(this.data.get(0));
+	}
+	
+	private static final int addLengths(final Collection<String> strings) {
+		return strings.stream()
+				.mapToInt(String::length)
+				.sum();
+	}
+	
+	final int getDataHeight() {
+		return this.data.size();
+	}
+	
+	final String getData(final int offsetV, final int offsetH, final int width) {
+		return String.join("", this.data.get(offsetV)).substring(offsetH, offsetH + width);
+	}
+	
+	private final void checkData() {
+		if (!this.data.isEmpty()) {
+			final int dataWidth = this.getDataWidth();
+			
+			for (final List<String> row : this.data) {
+				final int rowLength = addLengths(row);
+				
+				if (dataWidth != rowLength) {
+					throw new IllegalStateException(String.format("dataWidth: %s rowLength: %s", dataWidth, rowLength));
+				}
+			}
+		}
+	}
+	
+	/**
+	 * @author 2oLDNncs 20241108
+	 */
+	private final class Page {
+		
+		private final Index vIndex;
+		
+		private final Index hIndex;
+		
+		private final ReshaperLayout layout;
+		
+		Page(final int width, final int height, final ReshaperLayout layout) {
+			this.vIndex = new Index(height, getDataHeight());
+			this.hIndex = new Index(width, getDataWidth());
+			this.layout = layout;
+		}
+		
+		final boolean isValid() {
+			return this.vIndex.isValid() && this.hIndex.isValid();
+		}
+		
+		final void next() {
+			this.layout.next(this.vIndex, this.hIndex);
+		}
+		
+		final void printTo(final PrintStream out) {
+			for (int k = 0; k < this.vIndex.getStep(); k += 1) {
+				out.println(getData(this.vIndex.getValue() + k, this.hIndex.getValue(), this.hIndex.getStep()));
+			}
+		}
+		
+	}
+	
+}
+
+/**
+ * @author 2oLDNncs 20241108
+ */
+public enum ReshaperLayout {
+	
+	HORIZONTAL {
+		
+		@Override
+		public final void next(final Index vIndex, final Index hIndex) {
+			hIndex.next(vIndex);
+		}
+		
+	}, VERTICAL {
+		
+		@Override
+		public final void next(final Index vIndex, final Index hIndex) {
+			vIndex.next(hIndex);
+		}
+		
+	};
+	
+	public abstract void next(Index vIndex, Index hIndex);
+	
+}
+
+
+/**
+ * @author 2oLDNncs 20241224
+ */
+public abstract class TextTemplate implements Runnable {
+	
+	private final TextTemplate parent;
+	
+	private final TextTemplatePrinter printer;
+	
+	private String name;
+	
+	private final Map<String, Object> data = new HashMap<>();
+	
+	protected TextTemplate() {
+		this(stack.isEmpty() ? null : stack.peek());
+	}
+	
+	protected TextTemplate(final TextTemplatePrinter printer) {
+		this(null, printer);
+	}
+	
+	protected TextTemplate(final TextTemplate parent) {
+		this(parent, null == parent ? new TextTemplateIndenter() : parent.getPrinter());
+	}
+	
+	private TextTemplate(final TextTemplate parent, final TextTemplatePrinter printer) {
+		this.parent = parent;
+		this.printer = printer;
+		this.setName(UUID.randomUUID().toString());
+	}
+	
+	protected final TextTemplatePrinter getPrinter() {
+		return this.printer;
+	}
+	
+	protected final void set(final String key, final Object val) {
+		this.data.put(key, val);
+	}
+	
+	protected final Object get(final String key) {
+		return this.find(key).get();
+	}
+	
+	protected final Object get(final String key, final Function<String, Object> create) {
+		return this.data.computeIfAbsent(key, create);
+	}
+	
+	protected final Optional<Object> find(final String key) {
+		final TextTemplate ancestor = this.findAncestor(t -> t.data.containsKey(key));
+		
+		if (null != ancestor) {
+			return Optional.of(ancestor.data.get(key));
+		}
+		
+		return Optional.empty();
+	}
+	
+	protected final String getName() {
+		return this.name;
+	}
+	
+	protected final void setName(final String name) {
+		this.name = Objects.requireNonNull(name);
+	}
+	
+	@Method_run
+	@Override
+	public final void run() {
+		stack.push(this);
+		
+		try {
+			this.doRun();
+		} finally {
+			stack.pop(this);
+		}
+	}
+	
+	@Override
+	public final String toString() {
+		return String.format("%s[%s]", this.getClass().getSimpleName(), this.getName());
+	}
+	
+	@Method_doRun
+	protected void doRun() {
+		//pass
+	}
+	
+	@Method_print
+	public final void print(final Object x) {
+		this.getPrinter().print(x);
+	}
+	
+	@Method_println
+	public final void println(final Object x) {
+		this.getPrinter().println(x);
+	}
+	
+	@Method_printf
+	public final void printf(final String format, final Object... args) {
+		this.print(String.format(format, args));
+	}
+	
+	@Method_printlnf
+	public final void printlnf(final String format, final Object... args) {
+		this.println(String.format(format, args));
+	}
+	
+	protected final boolean isRoot() {
+		return null == this.parent;
+	}
+	
+	protected final TextTemplate getRoot() {
+		return this.findAncestor(TextTemplate::isRoot);
+	}
+	
+	protected final TextTemplate getAncestor(final int upCount) {
+		return Objects.requireNonNull(this.findAncestor(upCount));
+	}
+	
+	protected final TextTemplate getAncestor(final String ancestorName) {
+		return Objects.requireNonNull(this.findAncestor(ancestorName));
+	}
+	
+	protected final <T extends TextTemplate> T getAncestor(final Class<T> ancestorClass) {
+		return Objects.requireNonNull(this.findAncestor(ancestorClass));
+	}
+	
+	protected final TextTemplate findAncestor(final int upCount) {
+		return this.findAncestor(new Predicate<TextTemplate>() {
+			
+			private int i = 0;
+			
+			@Override
+			public final boolean test(final TextTemplate t) {
+				this.i += 1;
+				
+				return upCount < i;
+			}
+			
+		});
+	}
+	
+	protected final TextTemplate findAncestor(final String ancestorName) {
+		return this.findAncestor(t -> t.getName().equals(ancestorName));
+	}
+	
+	protected final <T extends TextTemplate> T findAncestor(final Class<T> ancestorClass) {
+		return ancestorClass.cast(this.findAncestor(ancestorClass::isInstance));
+	}
+	
+	protected final TextTemplate findAncestor(final Predicate<TextTemplate> p) {
+		TextTemplate result = this;
+		
+		while (null != result && !p.test(result)) {
+			result = result.parent;
+		}
+		
+		return result;
+		
+	}
+	
+	private static final MTStack<TextTemplate> stack = new MTStack<>();
+	
+	/**
+	 * @author 2oLDNncs 20241225
+	 *
+	 * @param <T>
+	 */
+	static final class MTStack<T> {
+		
+		private final Map<Thread, Stack<T>> stacks = new WeakHashMap<>();
+		
+		public final boolean isEmpty() {
+			return this.getStack().isEmpty();
+		}
+		
+		public final void push(final T item) {
+			this.getStack().push(item);
+		}
+		
+		public final T pop() {
+			return this.getStack().pop();
+		}
+		
+		public final void pop(final T item) {
+			if (item != this.pop()) {
+				throw new IllegalStateException();
+			}
+		}
+		
+		public final T peek() {
+			return this.getStack().peek();
+		}
+		
+		public final Stack<T> getStack() {
+			return this.stacks.computeIfAbsent(Thread.currentThread(), __ -> new Stack<>());
+		}
+		
+	}
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_run {
+		//pass
+	}
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_doRun {
+		//pass
+	}
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_print {
+		//pass
+	}
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_println {
+		//pass
+	}
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_printf {
+		//pass
+	}
+	
+	@Target(ElementType.METHOD)
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Method_printlnf {
+		//pass
+	}
+	
+}
+
+
+/**
+ * @author 2oLDNncs 20241225
+ */
+public final class TextTemplateIndenter extends TextTemplatePrinter {
+	
+	private String current;
+	
+	private String delta;
+	
+	public TextTemplateIndenter() {
+		this(System.out);
+	}
+	
+	public TextTemplateIndenter(final PrintStream out) {
+		this(out, "", "\t");
+	}
+	
+	public TextTemplateIndenter(final PrintStream out, final String initial, final String delta) {
+		super(out);
+		this.current = initial;
+		this.delta = delta;
+	}
+	
+	public final String getCurrent() {
+		return this.current;
+	}
+	
+	public final void setCurrent(final String current) {
+		this.current = current;
+	}
+	
+	public final String getDelta() {
+		return this.delta;
+	}
+	
+	public final void setDelta(final String delta) {
+		this.delta = delta;
+	}
+	
+	public final void indent(final Runnable action) {
+		this.indent();
+		
+		try {
+			action.run();
+		} finally {
+			this.outdent();
+		}
+	}
+	
+	public final void indent() {
+		this.setCurrent(this.getCurrent() + this.getDelta());
+	}
+	
+	public final void outdent() {
+		this.setCurrent(this.getCurrent().substring(0, this.getCurrent().length() - this.getDelta().length()));
+	}
+	
+	@Override
+	protected final void beforeLine() {
+		this.print(this.getCurrent());
+	}
+	
+}
+
+
+/**
+ * @author 2oLDNncs 20241228
+ */
+public abstract class TextTemplatePrinter {
+	
+	private final PrintStream out;
+	
+	private boolean newLine = true;
+	
+	public TextTemplatePrinter(final PrintStream out) {
+		this.out = out;
+	}
+	
+	public final void print(final Object x) {
+		this.beforePrint();
+		this.out.print(x);
+	}
+	
+	public final void println(final Object x) {
+		this.beforePrint();
+		this.out.println(x);
+		this.afterPrintln();
+	}
+	
+	protected void beforeLine() {
+		//pass
+	}
+	
+	protected void afterLine() {
+		//pass
+	}
+	
+	private void beforePrint() {
+		if (this.newLine) {
+			this.newLine = false;
+			this.beforeLine();
+		}
+	}
+	
+	private void afterPrintln() {
+		this.newLine = true;
+		this.afterLine();
+	}
+	
+}
+
+
+
+
+/**
+ * @author 2oLDNncs 20241214
+ */
+public class XSSFWorkbookToGraphviz {
+	
+	public static final String ARG_IN = "-In";
+	public static final String ARG_ARCS = "-Arcs";
+	public static final String ARG_NODE_PROPS = "-NodeProps";
+	public static final String ARG_ARC_PROPS = "-ArcProps";
+	public static final String ARG_CLASS_PROPS = "-ClassProps";
+	public static final String ARG_RANKDIR = "-Rankdir";
+	public static final String ARG_OUT = "-Out";
+	
+	public static final void main(final String[] args) throws InvalidFormatException, IOException {
+		final ArgsParser ap = new ArgsParser(args);
+		
+		ap.setDefault(ARG_IN, "data/test_gv.xlsx");
+		ap.setDefault(ARG_ARCS, "Arcs");
+		ap.setDefault(ARG_NODE_PROPS, "Node Props");
+		ap.setDefault(ARG_ARC_PROPS, "Arc Props");
+		ap.setDefault(ARG_CLASS_PROPS, "Class Props");
+		ap.setDefault(ARG_RANKDIR, "TB");
+		ap.setDefault(ARG_OUT, "data/test_gv.gv");
+		
+		try (final XSSFWorkbook workbook = new XSSFWorkbook(OPCPackage.open(ap.getFile(ARG_IN), PackageAccess.READ))) {
+			processWorkbook(workbook, ap);
+		}
+	}
+	
+	private static final void processWorkbook(final XSSFWorkbook workbook, final ArgsParser ap)
+			throws FileNotFoundException {
+		final PrintStream out;
+		
+		if (!ap.getString(ARG_OUT).trim().isEmpty()) {
+			out = new PrintStream(ap.getFile(ARG_OUT));
+		} else {
+			out = System.out;
+		}
+		
+		try {
+			final GraphvizPrinter gvp = new GraphvizPrinter(out);
+			
+			gvp.begin(true, "dot", true, ap.getString(ARG_RANKDIR));
+			
+			processSheet(workbook, ap, ARG_ARCS, gvp::processArc);
+			processSheet(workbook, ap, ARG_NODE_PROPS, gvp::processNodeProp);
+			processSheet(workbook, ap, ARG_ARC_PROPS, gvp::processArcProp);
+			processSheet(workbook, ap, ARG_CLASS_PROPS, gvp::processClassProp);
+			
+			gvp.end();
+		} finally {
+			if (System.out != out) {
+				out.close();
+			}
+		}
+	}
+	
+	private static final void processSheet(final XSSFWorkbook workbook, final ArgsParser ap, final String apKey,
+			final Consumer<String[]> action) {
+		final String sheetName = ap.getString(apKey);
+		
+		if (!sheetName.isEmpty()) {
+			final XSSFSheet sheet = workbook.getSheet(sheetName);
+			
+			if (null == sheet) {
+				throw new IllegalStateException(String.format("Sheet not found: %s", sheetName));
+			}
+			
+			forEachRow(sheet, action);
+		}
+	}
+	
+	public static final void forEachRow(final XSSFSheet sheet, final Consumer<String[]> action) {
+		final IntRange rowRange = new IntRange();
+		final IntRange colRange = new IntRange();
+		
+		if (!sheet.getTables().isEmpty()) {
+			final XSSFTable table = sheet.getTables().get(0);
+			rowRange.addRange(table.getStartRowIndex() + table.getHeaderRowCount(), table.getEndRowIndex());
+			colRange.addRange(table.getStartColIndex(), table.getEndColIndex());
+		} else {
+			for (final Row row : sheet) {
+				final Iterator<Cell> cellIterator = row.cellIterator();
+				
+				rowRange.addValue(row.getRowNum());
+				
+				while (cellIterator.hasNext()) {
+					final Cell cell = cellIterator.next();
+					colRange.addValue(cell.getColumnIndex());
+				}
+			}
+		}
+		
+		if (rowRange.isEmpty() || colRange.isEmpty()) {
+			return;
+		}
+		
+		final String[] lineElements = new String[colRange.getSize()];
+		
+		for (int i = rowRange.getMin(); i <= rowRange.getMax(); i += 1) {
+			final XSSFRow row = sheet.getRow(i);
+			
+			Arrays.fill(lineElements, "");
+			
+			for (int j = colRange.getMin(); j <= colRange.getMax(); j += 1) {
+				lineElements[j - colRange.getMin()] = toString(row.getCell(j));
+			}
+			
+			action.accept(lineElements);
+		}
+	}
+	
+	public static final String toString(final Cell cell) {
+		if (null == cell) {
+			return "";
+		}
+		
+		if (CellType.FORMULA.equals(cell.getCellType())) {
+			switch (cell.getCachedFormulaResultType()) {
+			case NUMERIC:
+				return String.format("%s", cell.getNumericCellValue());
+			case STRING:
+				return String.format("%s", cell.getStringCellValue());
+			case BOOLEAN:
+				return String.format("%s", cell.getBooleanCellValue());
+			case ERROR:
+				return String.format("%s", FormulaError.forInt(cell.getErrorCellValue()).getString());
+			default:
+				break;
+			}
+		}
+		
+		return cell.toString();
+	}
+	
+	/**
+	 * @author 2oLDNncs 20241215
+	 */
+	static final class IntRange {
+		
+		private int min = Integer.MAX_VALUE;
+		
+		private int max = Integer.MIN_VALUE;
+		
+		public final void addValue(final int value) {
+			if (value < this.min) {
+				this.min = value;
+			}
+			
+			if (this.max < value) {
+				this.max = value;
+			}
+		}
+		
+		public final void addRange(final int min, final int max) {
+			if (min <= max) {
+				this.addValue(min);
+				this.addValue(max);
+			}
+		}
+		
+		public final int getMin() {
+			return this.min;
+		}
+		
+		public final int getMax() {
+			return this.max;
+		}
+		
+		public final int getSize() {
+			final long result = 1L + this.getMax() - this.getMin();
+			
+			if (result < 0L || Integer.MAX_VALUE < result) {
+				throw new ArithmeticException(String.format("Invalid range: %s", this));
+			}
+			
+			return (int) result;
+		}
+		
+		public final boolean isEmpty() {
+			return this.getMax() < this.getMin();
+		}
+		
+		@Override
+		public final String toString() {
+			return "IntRange [min=" + this.min + ", max=" + this.max + "]";
+		}
+		
+	}
+	
+}
