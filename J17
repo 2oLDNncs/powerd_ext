@@ -691,6 +691,386 @@ public final class CblTemplateMaker extends JavaTemplate {
 
 
 /**
+ * @author 2oLDNncs 20250106
+ */
+public final class CblXrefParser {
+	
+	private final Map<Integer, Def> dataItems = new LinkedHashMap<>();
+	private final Map<Integer, Def> procedures = new LinkedHashMap<>();
+	private final Map<Integer, Def> programs = new LinkedHashMap<>();
+	private final Map<Integer, Def> verbs = new LinkedHashMap<>();
+	private Def currentDef = null;
+	private String parseMode = null;
+	
+	public final void parse(final String line) {
+		dprintlnf("%s", line);
+		
+		var matcher = P_TRIGGER.matcher(line);
+		
+		if (matcher.matches()) {
+			this.parseMode = matcher.group("ParseMode");
+			dprintlnf("--> TRIGGER (%s)", this.parseMode);
+		} else {
+			matcher = null;
+		}
+		
+		if (null == matcher) {
+			matcher = P_REFS.matcher(line);
+			
+			if (matcher.matches()) {
+				if (null != matcher.group("DefLineId")) {
+					String type = null;
+					Map<Integer, Def> target = null;
+					
+					switch (this.parseMode) {
+					case "data-names":
+						type = "DTA";
+						target = this.dataItems;
+						break;
+					case "procedures":
+						type = "PRC";
+						target = this.procedures;
+						break;
+					case "programs":
+						type = "PGM";
+						target = this.programs;
+						break;
+					case "verbs":
+						type = "VRB";
+						target = this.verbs;
+						break;
+					}
+					
+					if (null != type && null != target) {
+						this.currentDef = new Def(
+								Integer.parseInt(matcher.group("DefLineId")),
+								type,
+								matcher.group("DefName"));
+						
+						target.put(this.currentDef.getId(), this.currentDef);
+					}
+				}
+				
+				parseRefs(matcher.group("Refs"), this.currentDef);
+				
+				dprintlnf("--> REFS (%s) (%s) %s",
+						this.currentDef.getId(),
+						this.currentDef.getName(),
+						this.currentDef.getRefs());
+			} else {
+				matcher = null;
+			}
+		}
+	}
+	
+	public final void generateRows(final List<List<Object>> rows) {
+		this.dataItems.values().forEach(def -> {
+			rows.add(Arrays.asList(def.getId(), null, null, def.getName(), "!"));
+			def.getRefs().forEach(ref -> {
+				rows.add(Arrays.asList(ref.getId(), null, null, def.getName(), "M".equals(ref.getUsage()) ? "M" : "R"));
+			});
+		});
+		
+		this.verbs.values().forEach(def -> {
+			def.getRefs().forEach(ref -> {
+				rows.add(Arrays.asList(ref.getId(), null, def.getName(), "", ref.getUsage()));
+			});
+		});
+		
+		this.procedures.values().forEach(def -> {
+			rows.add(Arrays.asList(def.getId(), def.getName(), "", "", "!"));
+			def.getRefs().forEach(ref -> {
+				rows.add(Arrays.asList(ref.getId(), null, null, def.getName(), ref.getUsage()));
+			});
+		});
+		
+		rows.sort((r1, r2) -> Integer.compare((int) r1.get(0), (int) r2.get(0)));
+		
+		for (var i = 1; i < rows.size(); i += 1) {
+			final var previousRow = rows.get(i - 1);
+			final var currentRow = rows.get(i);
+			
+			for (var j = 1; j < currentRow.size(); j += 1) {
+				if (null == currentRow.get(j)) {
+					currentRow.set(j, previousRow.get(j));
+				}
+			}
+		}
+	}
+	
+	public static final void generateMoves(final List<List<Object>> rows, final List<List<Object>> moves) {
+		final var context = new ArrayList<>(Arrays.asList(null, null));
+		final var srcs = new LinkedHashSet<>();
+		final var dsts = new LinkedHashSet<>();
+		
+		rows.forEach(row -> {
+			final var proc = row.get(1);
+			final var verb = row.get(2);
+			final var obj = row.get(3);
+			
+			final var procIsValid = null != proc && !"".equals(proc);
+			final var verbIsValid = null != verb && !"".equals(verb);
+			
+			if (procIsValid && verbIsValid && "".equals(obj)) {
+				srcs.forEach(src -> {
+					dsts.forEach(dst -> {
+						final var move = new ArrayList<>(context);
+						move.add(src);
+						move.add(dst);
+						moves.add(move);
+					});
+				});
+				
+				dsts.clear();
+				srcs.clear();
+				context.clear();
+				context.addAll(row.subList(1, 3));
+			}
+			
+			final var op = row.get(4);
+			
+			if ("R".equals(op)) {
+				srcs.add(obj);
+			} else if ("M".equals(op)) {
+				dsts.add(obj);
+			}
+		});
+		
+		if (!context.isEmpty()) {
+			srcs.forEach(src -> {
+				dsts.forEach(dst -> {
+					final var move = new ArrayList<>(context);
+					move.add(src);
+					move.add(dst);
+					moves.add(move);
+				});
+			});
+		}
+	}
+	
+
+	public static final void parseRefs(final String refs, final Def def) {
+		final var refStrings = refs.split(" +");
+		
+		Arrays.stream(refStrings)
+				.filter(refString -> !refString.isEmpty())
+				.map(refString -> {
+					final var m = P_REF.matcher(refString);
+					
+					if (!m.matches()) {
+						throw new IllegalStateException(String.format("Invalid ref: %s", refString));
+					}
+					
+					return new Ref(Integer.parseInt(m.group("RefLineId")), m.group("RefUsage"));
+				})
+				.forEach(def.getRefs()::add);
+	}
+	
+	public static final Pattern P_TRIGGER = Pattern.compile(rgxLine(rgxSeq(
+			" *",
+			rgxNcgrp(rgxOr("Defined", "Count")),
+			" *",
+			"Cross-reference of ",
+			rgxGrp("ParseMode", "[^ ]+"),
+			" +",
+			"References",
+			" *")));
+	private static final String R_REF = rgxGrp("Ref",rgxSeq(
+			rgxGrp("RefUsage", rgxRep01("[A-Z]")),
+			rgxGrp("RefLineId", rgxRep1("\\d"))));
+	public static final Pattern P_REF = Pattern.compile(R_REF, Pattern.CASE_INSENSITIVE);
+	public static final Pattern P_REFS = Pattern.compile(
+			rgxLine(rgxSeq( // 2 cases: Definition with LineId, Name and references; Continuation with references only
+					rgxNcgrp(rgxOr( // Definition
+							rgxNcgrp(rgxSeq(
+									rgxRep(0, 8, " "),
+									rgxGrp("DefLineId", rgxRep1("\\d")),
+									rgxRep0(" "),
+									rgxGrp("DefName", rgxRep0("[^ .]")),
+									rgxRep0("[ .]"))),
+							rgxNcgrp(" {42,}"))), // No definition: continuation of previous line
+					rgxGrp("Refs", rgxRep0(rgxNcgrp(rgxSeq(
+							R_REF,
+							rgxRep0(" "))))))), // References
+			Pattern.CASE_INSENSITIVE);
+	
+	private static final String rgxRep01(final String regex) {
+		return rgxRep(0, 1, regex);
+	}
+	
+	private static final String rgxRep0(final String regex) {
+		return rgxRepN(0, regex);
+	}
+	
+	private static final String rgxRep1(final String regex) {
+		return rgxRepN(1, regex);
+	}
+	
+	private static final String rgxRepN(final int min, final String regex) {
+		return rgxRep(min, Integer.MAX_VALUE, regex);
+	}
+	
+	private static final String rgxRep(final int min, final int max, final String regex) {
+		if (Integer.MAX_VALUE == max) {
+			if (0 == min) {
+				return String.format("%s*", regex);
+			}
+			
+			if (1 == min) {
+				return String.format("%s+", regex);
+			}
+			
+			return String.format("%s{%s,}", regex, min);
+		}
+		
+		if (0 == min && 1 == max) {
+			return String.format("%s?", regex);
+		}
+		
+		return String.format("%s{%s,%s}", regex, min, max);
+	}
+	
+	/**
+	 * Full line
+	 */
+	private static final String rgxLine(final String regex) {
+		return rgxStart(rgxEnd(regex));
+	}
+	
+	/**
+	 * Line start
+	 */
+	private static final String rgxStart(final String regex) {
+		return String.format("^%s", regex);
+	}
+	
+	/**
+	 * Line end
+	 */
+	private static final String rgxEnd(final String regex) {
+		return String.format("%s$", regex);
+	}
+	
+	/**
+	 * Sequence
+	 */
+	private static final String rgxSeq(final String... regexes) {
+		return String.join("", regexes);
+	}
+	
+	/**
+	 * Union
+	 */
+	private static final String rgxOr(final String... regexes) {
+		return String.join("|", regexes);
+	}
+	
+	/**
+	 * Named capturing group
+	 */
+	private static final String rgxGrp(final String name, final String regex) {
+		return String.format("(?<%s>%s)", name, regex);
+	}
+	
+	/**
+	 * Capturing group
+	 */
+	private static final String rgxGrp(final String regex) {
+		return String.format("(%s)", regex);
+	}
+	
+	/**
+	 * Non-capturing group
+	 */
+	private static final String rgxNcgrp(final String regex) {
+		return String.format("(?:%s)", regex);
+	}
+	
+	/**
+	 * @author 2oLDNncs 20250104
+	 */
+	public static abstract class Obj {
+		
+		private final int id;
+		
+		protected Obj(final int id) {
+			this.id = id;
+		}
+		
+		public final int getId() {
+			return this.id;
+		}
+		
+	}
+	
+	/**
+	 * @author 2oLDNncs 20250104
+	 */
+	public static final class Def extends Obj {
+		
+		private final String type;
+		
+		private final String name;
+		
+		private final Collection<Ref> refs = new ArrayList<>();
+		
+		public Def(final int lineId, final String type, final String name) {
+			super(lineId);
+			this.type = type;
+			this.name = name;
+		}
+		
+		public final String getType() {
+			return this.type;
+		}
+		
+		public final String getName() {
+			return this.name;
+		}
+		
+		public final Collection<Ref> getRefs() {
+			return this.refs;
+		}
+		
+	}
+	
+	/**
+	 * @author 2oLDNncs 20250104
+	 */
+	public static final class Ref extends Obj {
+		
+		private final String usage;
+		
+		public Ref(final int lineId, final String usage) {
+			super(lineId);
+			this.usage = usage;
+		}
+		
+		public final String getUsage() {
+			return this.usage;
+		}
+		
+		@Override
+		public final String toString() {
+			return String.format("%s%s", this.getUsage(), this.getId());
+		}
+		
+	}
+	
+	/**
+	 * @author 2oLDNncs 20250104
+	 */
+	public static enum ParseMode {
+		
+		XREF_DATA, XREF_PROC, VBREF;
+		
+	}
+	
+}
+
+
+
+/**
  * @author 2oLDNncs 20240804
  */
 public final class GraphvizPrinter {
@@ -1071,6 +1451,40 @@ public final class Helpers {
 		return Arrays.stream(cls.getDeclaredMethods())
 				.filter(m -> m.isAnnotationPresent(annotation))
 				.findAny().get().getName();
+	}
+	
+	public static final void dprintlnf(final String format, final Object... args) {
+		final var stackTrace = Thread.currentThread().getStackTrace();
+		
+		for (final var ste : stackTrace) {
+			final var steClassName = ste.getClassName();
+			
+			try {
+				final var steClass = Class.forName(steClassName);
+				final var debug = steClass.getAnnotation(Debug.class);
+				
+				if (null != debug && debug.value()) {
+					final var callerSte = stackTrace[2];
+					
+					System.out.println(String.format("(%s:%s) %s",
+							callerSte.getFileName(),
+							callerSte.getLineNumber(),
+							String.format(format, args)));
+					
+					break;
+				}
+			} catch (final ClassNotFoundException e) {
+				e.printStackTrace();
+			}
+		}
+	}
+	
+	@Target({ElementType.TYPE})
+	@Retention(RetentionPolicy.RUNTIME)
+	public static abstract @interface Debug {
+		
+		public boolean value() default true;
+		
 	}
 	
 }
@@ -2222,6 +2636,55 @@ public final class MakeTextTemplate {
 	
 	public static final String removeExtension(final String fileName) {
 		return fileName.replaceFirst("\\.[^.]+$", "");
+	}
+	
+}
+
+
+
+/**
+ * @author 2oLDNncs 20250104
+ */
+@Debug
+public class ParseCblXref {
+	
+	public static final String ARG_IN = "-In";
+	
+	public static final void main(final String... args) throws IOException {
+		final var ap = new ArgsParser(args);
+		
+		ap.setDefault(ARG_IN, "data/cobol6_xrefvbref.txt");
+		
+		final var parser = new CblXrefParser();
+		
+		Files.lines(ap.getPath(ARG_IN))
+		.forEach(parser::parse);
+		
+		final List<List<Object>> rows = new ArrayList<>();
+		
+		parser.generateRows(rows);
+		
+		{
+			System.out.println();
+			System.out.println("LineId\tProc\tVerb\tObj\tOp");
+			
+			rows.forEach(row -> {
+				System.out.println(String.join("\t", row.stream().map(Objects::toString).toList()));
+			});
+		}
+		
+		final var moves = new ArrayList<List<Object>>();
+		
+		CblXrefParser.generateMoves(rows, moves);
+		
+		{
+			System.out.println();
+			System.out.println("Proc\tVerb\tSrc\tDst");
+			
+			moves.forEach(row -> {
+				System.out.println(String.join("\t", row.stream().map(Objects::toString).toList()));
+			});
+		}
 	}
 	
 }
