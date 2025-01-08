@@ -705,53 +705,28 @@ public final class CblXrefParser {
 	public final void parse(final String line) {
 		dprintlnf("%s", line);
 		
-		var matcher = P_TRIGGER.matcher(line);
+		Matcher matcher = null;
 		
-		if (matcher.matches()) {
-			this.parseMode = matcher.group("ParseMode");
-			dprintlnf("--> TRIGGER (%s)", this.parseMode);
-		} else {
-			matcher = null;
+		if (null == matcher) {
+			matcher = P_TRIGGER.matcher(line);
+			
+			if (matcher.matches()) {
+				this.parseMode = matcher.group(G_PARSE_MODE);
+				dprintlnf("--> TRIGGER (%s)", this.parseMode);
+			} else {
+				matcher = null;
+			}
 		}
 		
 		if (null == matcher) {
 			matcher = P_REFS.matcher(line);
 			
 			if (matcher.matches()) {
-				if (null != matcher.group("DefLineId")) {
-					String type = null;
-					Map<Integer, Def> target = null;
-					
-					switch (this.parseMode) {
-					case "data-names":
-						type = "DTA";
-						target = this.dataItems;
-						break;
-					case "procedures":
-						type = "PRC";
-						target = this.procedures;
-						break;
-					case "programs":
-						type = "PGM";
-						target = this.programs;
-						break;
-					case "verbs":
-						type = "VRB";
-						target = this.verbs;
-						break;
-					}
-					
-					if (null != type && null != target) {
-						this.currentDef = new Def(
-								Integer.parseInt(matcher.group("DefLineId")),
-								type,
-								matcher.group("DefName"));
-						
-						target.put(this.currentDef.getId(), this.currentDef);
-					}
+				if (null != matcher.group(G_DEF_LINE_ID)) {
+					this.addNewDef(matcher);
 				}
 				
-				parseRefs(matcher.group("Refs"), this.currentDef);
+				parseRefs(matcher.group(G_REFS), this.currentDef);
 				
 				dprintlnf("--> REFS (%s) (%s) %s",
 						this.currentDef.getId(),
@@ -763,11 +738,40 @@ public final class CblXrefParser {
 		}
 	}
 	
+	private final void addNewDef(Matcher matcher) {
+		final Map<Integer, Def> target = this.selectParseTarget();
+		
+		if (null != target) {
+			this.currentDef = new Def(
+					Integer.parseInt(matcher.group(G_DEF_LINE_ID)),
+					this.parseMode,
+					matcher.group(G_DEF_NAME));
+			
+			target.put(this.currentDef.getId(), this.currentDef);
+		}
+	}
+	
+	private final Map<Integer, Def> selectParseTarget() {
+		switch (this.parseMode) {
+		case PM_DATA_NAMES:
+			return this.dataItems;
+		case PM_PROCEDURES:
+			return this.procedures;
+		case PM_PROGRAMS:
+			return this.programs;
+		case PM_VERBS:
+			return this.verbs;
+		}
+		
+		return null;
+	}
+	
 	public final void generateRows(final List<List<Object>> rows) {
 		this.dataItems.values().forEach(def -> {
 			rows.add(Arrays.asList(def.getId(), null, null, def.getName(), "!"));
 			def.getRefs().forEach(ref -> {
-				rows.add(Arrays.asList(ref.getId(), null, null, def.getName(), "M".equals(ref.getUsage()) ? "M" : "R"));
+				rows.add(Arrays.asList(ref.getId(), null, null, def.getName(),
+						U_MODIFY.equals(ref.getUsage()) ? U_MODIFY : U_READ));
 			});
 		});
 		
@@ -796,6 +800,147 @@ public final class CblXrefParser {
 				}
 			}
 		}
+	}
+	
+	public static final String U_PERFORM = "P";
+	public static final String U_READ = "R";
+	public static final String U_MODIFY = "M";
+	
+	public static final String PM_DATA_NAMES = "data names";
+	public static final String PM_PROCEDURES = "procedures";
+	public static final String PM_PROGRAMS = "programs";
+	public static final String PM_VERBS = "verbs";
+	
+	public static final String G_PARSE_MODE = "ParseMode";
+	public static final String G_REF = "Ref";
+	public static final String G_REF_USAGE = "RefUsage";
+	public static final String G_REF_LINE_ID = "RefLineId";
+	public static final String G_DEF_LINE_ID = "DefLineId";
+	public static final String G_DEF_NAME = "DefName";
+	public static final String G_REFS = "Refs";
+	
+	public static final Pattern P_TRIGGER = Pattern.compile(rgxLine(rgxSeq(
+			rgxRep0(" "),
+			rgxOr("Defined", "Count"),
+			rgxRep1(" "),
+			"Cross-reference of ",
+			rgxGrp(G_PARSE_MODE, rgxOr(PM_DATA_NAMES, PM_PROCEDURES, PM_PROGRAMS, PM_VERBS)),
+			rgxRep1(" "),
+			"References",
+			rgxRep0(" "))));
+	private static final String R_REF = rgxGrp(G_REF,rgxSeq(
+			rgxGrp(G_REF_USAGE, rgxRep01("[A-Z]")),
+			rgxGrp(G_REF_LINE_ID, rgxRep1("\\d"))));
+	public static final Pattern P_REF = Pattern.compile(R_REF, Pattern.CASE_INSENSITIVE);
+	public static final Pattern P_REFS = Pattern.compile(
+			rgxLine(rgxSeq( // 2 cases: Definition with LineId, Name and references; Continuation with references only
+					rgxOr(
+							rgxSeq( // Definition
+									rgxRep(0, 9, " "),
+									rgxGrp(G_DEF_LINE_ID, rgxRep1("\\d")),
+									rgxRep1(" "),
+									rgxGrp(G_DEF_NAME, rgxRep1("[^ .]")),
+									rgxRep1("[ .]")),
+							rgxRep(42, 44, " ")), // No definition: continuation of previous line
+					rgxGrp(G_REFS, rgxRep0(rgxSeq(
+							R_REF,
+							rgxRep0(" ")))))), // References
+			Pattern.CASE_INSENSITIVE);
+	
+	private static final String rgxRep01(final String regex) {
+		return rgxRep(0, 1, regex);
+	}
+	
+	private static final String rgxRep0(final String regex) {
+		return rgxRepN(0, regex);
+	}
+	
+	private static final String rgxRep1(final String regex) {
+		return rgxRepN(1, regex);
+	}
+	
+	private static final String rgxRepN(final int min, final String regex) {
+		return rgxRep(min, Integer.MAX_VALUE, regex);
+	}
+	
+	private static final String rgxRep(final int min, final int max, final String regex) {
+		final var grp = rgxNcgrp(regex);
+		
+		if (Integer.MAX_VALUE == max) {
+			if (0 == min) {
+				return String.format("%s*", grp);
+			}
+			
+			if (1 == min) {
+				return String.format("%s+", grp);
+			}
+			
+			return String.format("%s{%s,}", grp, min);
+		}
+		
+		if (0 == min && 1 == max) {
+			return String.format("%s?", grp);
+		}
+		
+		return String.format("%s{%s,%s}", grp, min, max);
+	}
+	
+	/**
+	 * Full line
+	 */
+	private static final String rgxLine(final String regex) {
+		return rgxStart(rgxEnd(regex));
+	}
+	
+	/**
+	 * Line start
+	 */
+	private static final String rgxStart(final String regex) {
+		return String.format("^%s", regex);
+	}
+	
+	/**
+	 * Line end
+	 */
+	private static final String rgxEnd(final String regex) {
+		return String.format("%s$", regex);
+	}
+	
+	/**
+	 * Sequence
+	 */
+	private static final String rgxSeq(final String... regexes) {
+		return String.join("", regexes);
+	}
+	
+	/**
+	 * Union
+	 */
+	private static final String rgxOr(final String... regexes) {
+		return rgxNcgrp(String.join("|", Arrays.stream(regexes)
+				.map(CblXrefParser::rgxNcgrp)
+				.toArray(String[]::new)));
+	}
+	
+	/**
+	 * Named capturing group
+	 */
+	private static final String rgxGrp(final String name, final String regex) {
+		return String.format("(?<%s>%s)", name, regex);
+	}
+	
+	/**
+	 * Capturing group
+	 */
+	private static final String rgxGrp(final String regex) {
+		return String.format("(%s)", regex);
+	}
+	
+	/**
+	 * Non-capturing group
+	 */
+	private static final String rgxNcgrp(final String regex) {
+		return String.format("(?:%s)", regex);
 	}
 	
 	public static final void generateMoves(final List<List<Object>> rows, final List<List<Object>> moves) {
@@ -848,8 +993,7 @@ public final class CblXrefParser {
 		}
 	}
 	
-
-	public static final void parseRefs(final String refs, final Def def) {
+	private static final void parseRefs(final String refs, final Def def) {
 		final var refStrings = refs.split(" +");
 		
 		Arrays.stream(refStrings)
@@ -861,131 +1005,11 @@ public final class CblXrefParser {
 						throw new IllegalStateException(String.format("Invalid ref: %s", refString));
 					}
 					
-					return new Ref(Integer.parseInt(m.group("RefLineId")), m.group("RefUsage"));
+					return new Ref(Integer.parseInt(m.group(G_REF_LINE_ID)), m.group(G_REF_USAGE));
 				})
 				.forEach(def.getRefs()::add);
 	}
-	
-	public static final Pattern P_TRIGGER = Pattern.compile(rgxLine(rgxSeq(
-			" *",
-			rgxNcgrp(rgxOr("Defined", "Count")),
-			" *",
-			"Cross-reference of ",
-			rgxGrp("ParseMode", "[^ ]+"),
-			" +",
-			"References",
-			" *")));
-	private static final String R_REF = rgxGrp("Ref",rgxSeq(
-			rgxGrp("RefUsage", rgxRep01("[A-Z]")),
-			rgxGrp("RefLineId", rgxRep1("\\d"))));
-	public static final Pattern P_REF = Pattern.compile(R_REF, Pattern.CASE_INSENSITIVE);
-	public static final Pattern P_REFS = Pattern.compile(
-			rgxLine(rgxSeq( // 2 cases: Definition with LineId, Name and references; Continuation with references only
-					rgxNcgrp(rgxOr( // Definition
-							rgxNcgrp(rgxSeq(
-									rgxRep(0, 8, " "),
-									rgxGrp("DefLineId", rgxRep1("\\d")),
-									rgxRep0(" "),
-									rgxGrp("DefName", rgxRep0("[^ .]")),
-									rgxRep0("[ .]"))),
-							rgxNcgrp(" {42,}"))), // No definition: continuation of previous line
-					rgxGrp("Refs", rgxRep0(rgxNcgrp(rgxSeq(
-							R_REF,
-							rgxRep0(" "))))))), // References
-			Pattern.CASE_INSENSITIVE);
-	
-	private static final String rgxRep01(final String regex) {
-		return rgxRep(0, 1, regex);
-	}
-	
-	private static final String rgxRep0(final String regex) {
-		return rgxRepN(0, regex);
-	}
-	
-	private static final String rgxRep1(final String regex) {
-		return rgxRepN(1, regex);
-	}
-	
-	private static final String rgxRepN(final int min, final String regex) {
-		return rgxRep(min, Integer.MAX_VALUE, regex);
-	}
-	
-	private static final String rgxRep(final int min, final int max, final String regex) {
-		if (Integer.MAX_VALUE == max) {
-			if (0 == min) {
-				return String.format("%s*", regex);
-			}
-			
-			if (1 == min) {
-				return String.format("%s+", regex);
-			}
-			
-			return String.format("%s{%s,}", regex, min);
-		}
 		
-		if (0 == min && 1 == max) {
-			return String.format("%s?", regex);
-		}
-		
-		return String.format("%s{%s,%s}", regex, min, max);
-	}
-	
-	/**
-	 * Full line
-	 */
-	private static final String rgxLine(final String regex) {
-		return rgxStart(rgxEnd(regex));
-	}
-	
-	/**
-	 * Line start
-	 */
-	private static final String rgxStart(final String regex) {
-		return String.format("^%s", regex);
-	}
-	
-	/**
-	 * Line end
-	 */
-	private static final String rgxEnd(final String regex) {
-		return String.format("%s$", regex);
-	}
-	
-	/**
-	 * Sequence
-	 */
-	private static final String rgxSeq(final String... regexes) {
-		return String.join("", regexes);
-	}
-	
-	/**
-	 * Union
-	 */
-	private static final String rgxOr(final String... regexes) {
-		return String.join("|", regexes);
-	}
-	
-	/**
-	 * Named capturing group
-	 */
-	private static final String rgxGrp(final String name, final String regex) {
-		return String.format("(?<%s>%s)", name, regex);
-	}
-	
-	/**
-	 * Capturing group
-	 */
-	private static final String rgxGrp(final String regex) {
-		return String.format("(%s)", regex);
-	}
-	
-	/**
-	 * Non-capturing group
-	 */
-	private static final String rgxNcgrp(final String regex) {
-		return String.format("(?:%s)", regex);
-	}
-	
 	/**
 	 * @author 2oLDNncs 20250104
 	 */
@@ -1054,15 +1078,6 @@ public final class CblXrefParser {
 		public final String toString() {
 			return String.format("%s%s", this.getUsage(), this.getId());
 		}
-		
-	}
-	
-	/**
-	 * @author 2oLDNncs 20250104
-	 */
-	public static enum ParseMode {
-		
-		XREF_DATA, XREF_PROC, VBREF;
 		
 	}
 	
