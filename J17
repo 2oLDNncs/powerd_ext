@@ -690,9 +690,11 @@ public final class CblTemplateMaker extends JavaTemplate {
 
 
 
+
 /**
  * @author 2oLDNncs 20250106
  */
+@Debug(false)
 public final class CblXrefParser {
 	
 	private final Map<Integer, Def> dataItems = new LinkedHashMap<>();
@@ -718,7 +720,7 @@ public final class CblXrefParser {
 			}
 		}
 		
-		if (null == matcher) {
+		if (null == matcher && null != this.parseMode) {
 			matcher = P_REFS.matcher(line);
 			
 			if (matcher.matches()) {
@@ -726,12 +728,14 @@ public final class CblXrefParser {
 					this.addNewDef(matcher);
 				}
 				
-				parseRefs(matcher.group(G_REFS), this.currentDef);
-				
-				dprintlnf("--> REFS (%s) (%s) %s",
-						this.currentDef.getId(),
-						this.currentDef.getName(),
-						this.currentDef.getRefs());
+				if (null != this.currentDef) {
+					parseRefs(matcher.group(G_REFS), this.currentDef);
+					
+					dprintlnf("--> REFS (%s) (%s) %s",
+							this.currentDef.getId(),
+							this.currentDef.getName(),
+							this.currentDef.getRefs());
+				}
 			} else {
 				matcher = null;
 			}
@@ -766,33 +770,33 @@ public final class CblXrefParser {
 		return null;
 	}
 	
-	public final void generateRows(final List<List<Object>> rows) {
-		this.dataItems.values().forEach(def -> {
-			rows.add(Arrays.asList(def.getId(), null, null, def.getName(), "!"));
-			def.getRefs().forEach(ref -> {
-				rows.add(Arrays.asList(ref.getId(), null, null, def.getName(),
-						U_MODIFY.equals(ref.getUsage()) ? U_MODIFY : U_READ));
-			});
-		});
-		
+	public final void generateOps(final List<List<Object>> ops) {
 		this.verbs.values().forEach(def -> {
 			def.getRefs().forEach(ref -> {
-				rows.add(Arrays.asList(ref.getId(), null, def.getName(), "", ref.getUsage()));
+				ops.add(Arrays.asList(ref.getId(), null, def.getName(), "", ref.getUsage()));
 			});
 		});
 		
 		this.procedures.values().forEach(def -> {
-			rows.add(Arrays.asList(def.getId(), def.getName(), "", "", "!"));
+			ops.add(Arrays.asList(def.getId(), def.getName(), "", "", "!"));
 			def.getRefs().forEach(ref -> {
-				rows.add(Arrays.asList(ref.getId(), null, null, def.getName(), ref.getUsage()));
+				ops.add(Arrays.asList(ref.getId(), null, null, def.getName(), ref.getUsage()));
 			});
 		});
 		
-		rows.sort((r1, r2) -> Integer.compare((int) r1.get(0), (int) r2.get(0)));
+		this.dataItems.values().forEach(def -> {
+			ops.add(Arrays.asList(def.getId(), null, null, def.getName(), "!"));
+			def.getRefs().forEach(ref -> {
+				ops.add(Arrays.asList(ref.getId(), null, null, def.getName(),
+						U_MODIFY.equals(ref.getUsage()) ? U_MODIFY : U_READ));
+			});
+		});
 		
-		for (var i = 1; i < rows.size(); i += 1) {
-			final var previousRow = rows.get(i - 1);
-			final var currentRow = rows.get(i);
+		ops.sort((r1, r2) -> Integer.compare((int) r1.get(0), (int) r2.get(0)));
+		
+		for (var i = 1; i < ops.size(); i += 1) {
+			final var previousRow = ops.get(i - 1);
+			final var currentRow = ops.get(i);
 			
 			for (var j = 1; j < currentRow.size(); j += 1) {
 				if (null == currentRow.get(j)) {
@@ -841,10 +845,10 @@ public final class CblXrefParser {
 									rgxRep1(" "),
 									rgxGrp(G_DEF_NAME, rgxRep1("[^ .]")),
 									rgxRep1("[ .]")),
-							rgxRep(42, 44, " ")), // No definition: continuation of previous line
+							rgxRep(40, 42, " ")), // No definition: continuation of previous line
 					rgxGrp(G_REFS, rgxRep0(rgxSeq(
-							R_REF,
-							rgxRep0(" ")))))), // References
+							" ",
+							R_REF))))), // References
 			Pattern.CASE_INSENSITIVE);
 	
 	private static final String rgxRep01(final String regex) {
@@ -943,12 +947,12 @@ public final class CblXrefParser {
 		return String.format("(?:%s)", regex);
 	}
 	
-	public static final void generateMoves(final List<List<Object>> rows, final List<List<Object>> moves) {
+	public static final void generateFlows(final List<List<Object>> ops, final List<List<Object>> flows) {
 		final var context = new ArrayList<>(Arrays.asList(null, null));
 		final var srcs = new LinkedHashSet<>();
 		final var dsts = new LinkedHashSet<>();
 		
-		rows.forEach(row -> {
+		ops.forEach(row -> {
 			final var proc = row.get(1);
 			final var verb = row.get(2);
 			final var obj = row.get(3);
@@ -962,7 +966,7 @@ public final class CblXrefParser {
 						final var move = new ArrayList<>(context);
 						move.add(src);
 						move.add(dst);
-						moves.add(move);
+						flows.add(move);
 					});
 				});
 				
@@ -974,9 +978,9 @@ public final class CblXrefParser {
 			
 			final var op = row.get(4);
 			
-			if ("R".equals(op)) {
+			if (U_READ.equals(op)) {
 				srcs.add(obj);
-			} else if ("M".equals(op)) {
+			} else if (U_MODIFY.equals(op)) {
 				dsts.add(obj);
 			}
 		});
@@ -987,7 +991,7 @@ public final class CblXrefParser {
 					final var move = new ArrayList<>(context);
 					move.add(src);
 					move.add(dst);
-					moves.add(move);
+					flows.add(move);
 				});
 			});
 		}
@@ -1468,6 +1472,10 @@ public final class Helpers {
 				.findAny().get().getName();
 	}
 	
+	public static final String removeExt(final String fileName) {
+		return fileName.replaceFirst("\\.[^.]*$", "");
+	}
+	
 	public static final void dprintlnf(final String format, final Object... args) {
 		final var stackTrace = Thread.currentThread().getStackTrace();
 		
@@ -1478,18 +1486,20 @@ public final class Helpers {
 				final var steClass = Class.forName(steClassName);
 				final var debug = steClass.getAnnotation(Debug.class);
 				
-				if (null != debug && debug.value()) {
-					final var callerSte = stackTrace[2];
-					
-					System.out.println(String.format("(%s:%s) %s",
-							callerSte.getFileName(),
-							callerSte.getLineNumber(),
-							String.format(format, args)));
+				if (null != debug) {
+					if (debug.value()) {
+						final var callerSte = stackTrace[2];
+						
+						System.out.println(String.format("(%s:%s) %s",
+								callerSte.getFileName(),
+								callerSte.getLineNumber(),
+								String.format(format, args)));
+					}
 					
 					break;
 				}
 			} catch (final ClassNotFoundException e) {
-				e.printStackTrace();
+				//pass
 			}
 		}
 	}
@@ -2664,42 +2674,90 @@ public final class MakeTextTemplate {
 public class ParseCblXref {
 	
 	public static final String ARG_IN = "-In";
+	public static final String ARG_OPS = "-Ops";
+	public static final String ARG_FLOWS = "-Flows";
 	
 	public static final void main(final String... args) throws IOException {
 		final var ap = new ArgsParser(args);
 		
 		ap.setDefault(ARG_IN, "data/cobol6_xrefvbref.txt");
+		ap.setDefault(ARG_OPS, "data/xref_ops.txt");
+		ap.setDefault(ARG_FLOWS, "data/xref_flows.txt");
 		
+		try (final var opsOut = new PrintStream(ap.getFile(ARG_OPS))) {
+			try (final var flowsOut = new PrintStream(ap.getFile(ARG_FLOWS))) {
+				final List<List<Object>> ops = new ArrayList<>();
+				final List<List<Object>> flows = new ArrayList<>();
+				
+				opsOut.println("Module\tLine\tProc\tVerb\tObj\tOp");
+				flowsOut.println("Module\tProc\tVerb\tSrc\tDst");
+				
+				final var inPath = ap.getPath(ARG_IN);
+				final var files = inPath.toFile().listFiles();
+				
+				if (null != files) {
+					for (final var file : files) {
+						Helpers.dprintlnf("Processing %s...", file);
+						processModule(file.toPath(), ops, flows);
+						printTabbedData(ops, opsOut);
+						printTabbedData(flows, flowsOut);
+						Helpers.dprintlnf("Processing %s... Done", file);
+					}
+				} else {
+					Helpers.dprintlnf("Processing %s...", inPath);
+					processModule(inPath, ops, flows);
+					printTabbedData(ops, opsOut);
+					printTabbedData(flows, flowsOut);
+					Helpers.dprintlnf("Processing %s... Done", inPath);
+				}
+			}
+		}
+	}
+	
+	public static final void printTabbedData(final List<? extends List<?>> rows, final PrintStream out) {
+		rows.forEach(row -> {
+			out.println(String.join("\t", row.stream()
+					.map(Objects::toString)
+					.toList()));
+		});
+	}
+	
+	public static final void processModule(final Path modulePath,
+			final List<List<Object>> ops, final List<List<Object>> flows) throws IOException {
+		final var moduleName = Helpers.removeExt(modulePath.getFileName().toString());
 		final var parser = new CblXrefParser();
 		
-		Files.lines(ap.getPath(ARG_IN))
+		Files.lines(modulePath)
 		.forEach(parser::parse);
 		
-		final List<List<Object>> rows = new ArrayList<>();
+		final List<List<Object>> moduleOps = new ArrayList<>();
 		
-		parser.generateRows(rows);
+		parser.generateOps(moduleOps);
 		
-		{
-			System.out.println();
-			System.out.println("LineId\tProc\tVerb\tObj\tOp");
-			
-			rows.forEach(row -> {
-				System.out.println(String.join("\t", row.stream().map(Objects::toString).toList()));
-			});
-		}
+		moduleOps.stream()
+		.map(row -> {
+			return makeList(moduleName, row);
+		})
+		.forEach(ops::add);
 		
-		final var moves = new ArrayList<List<Object>>();
+		final var moduleFlows = new ArrayList<List<Object>>();
 		
-		CblXrefParser.generateMoves(rows, moves);
+		CblXrefParser.generateFlows(moduleOps, moduleFlows);
 		
-		{
-			System.out.println();
-			System.out.println("Proc\tVerb\tSrc\tDst");
-			
-			moves.forEach(row -> {
-				System.out.println(String.join("\t", row.stream().map(Objects::toString).toList()));
-			});
-		}
+		moduleFlows.stream()
+		.map(row -> {
+			return makeList(moduleName, row);
+		})
+		.forEach(flows::add);
+	}
+	
+	private static final List<Object> makeList(final Object head, final List<Object> tail) {
+		final var result = new ArrayList<>(1 + tail.size());
+		
+		result.add(head);
+		result.addAll(tail);
+		
+		return result;
 	}
 	
 }
