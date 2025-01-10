@@ -746,10 +746,18 @@ public final class CblXrefParser {
 		final Map<Integer, Def> target = this.selectParseTarget();
 		
 		if (null != target) {
-			this.currentDef = new Def(
-					Integer.parseInt(matcher.group(G_DEF_LINE_ID)),
-					this.parseMode,
-					matcher.group(G_DEF_NAME));
+			final String sLineId = matcher.group(G_DEF_LINE_ID);
+			final int lineId;
+			
+			if (C_EXTERNAL.equals(sLineId)) {
+				lineId = 0;
+			} else {
+				lineId = Integer.parseInt(sLineId);
+			}
+			
+			final String name = matcher.group(G_DEF_NAME);
+			
+			this.currentDef = new Def(lineId, this.parseMode, name);
 			
 			target.put(this.currentDef.getId(), this.currentDef);
 		}
@@ -823,6 +831,8 @@ public final class CblXrefParser {
 	public static final String G_DEF_NAME = "DefName";
 	public static final String G_REFS = "Refs";
 	
+	public static final String C_EXTERNAL = "EXTERNAL";
+	
 	public static final Pattern P_TRIGGER = Pattern.compile(rgxLine(rgxSeq(
 			rgxRep0(" "),
 			rgxOr("Defined", "Count"),
@@ -841,7 +851,9 @@ public final class CblXrefParser {
 					rgxOr(
 							rgxSeq( // Definition
 									rgxRep(0, 9, " "),
-									rgxGrp(G_DEF_LINE_ID, rgxRep1("\\d")),
+									rgxGrp(G_DEF_LINE_ID, rgxOr(
+											C_EXTERNAL,
+											rgxRep1("\\d"))),
 									rgxRep1(" "),
 									rgxGrp(G_DEF_NAME, rgxRep1("[^ .]")),
 									rgxRep1("[ .]")),
@@ -1013,7 +1025,7 @@ public final class CblXrefParser {
 				})
 				.forEach(def.getRefs()::add);
 	}
-		
+	
 	/**
 	 * @author 2oLDNncs 20250104
 	 */
@@ -1042,8 +1054,8 @@ public final class CblXrefParser {
 		
 		private final Collection<Ref> refs = new ArrayList<>();
 		
-		public Def(final int lineId, final String type, final String name) {
-			super(lineId);
+		public Def(final int id, final String type, final String name) {
+			super(id);
 			this.type = type;
 			this.name = name;
 		}
