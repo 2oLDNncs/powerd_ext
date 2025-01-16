@@ -684,8 +684,6 @@ public final class CblTemplateMaker extends JavaTemplate {
 	private static final Pattern P_END_PROGRAM = Pattern.compile(REGEX_NORMAL_LINE_PREFIX +
 			"END +PROGRAM +([^ .]+).*$", Pattern.CASE_INSENSITIVE);
 	
-	public static final String M_run = getMethodName(TextTemplate.class, Method_run.class);
-	
 }
 
 
@@ -1267,7 +1265,7 @@ public final class GraphvizPrinter {
 		this.arcs.forEach(arc -> {
 			final var tailId = arc.get(0);
 			final var headId = arc.get(1);
-			final var props = Collections.<String, String>emptyMap();
+			final var props = new LinkedHashMap<String, String>();
 			
 			this.applyProps(this.arcProps.getOrDefault(arc, Collections.emptyMap()), props);
 			
@@ -2199,6 +2197,7 @@ public enum ReshaperLayout {
 }
 
 
+
 /**
  * @author 2oLDNncs 20241224
  */
@@ -2359,6 +2358,10 @@ public abstract class TextTemplate implements Runnable {
 		return result;
 		
 	}
+	
+	public static final String M_run = getMethodName(TextTemplate.class, Method_run.class);
+	public static final String M_doRun = getMethodName(TextTemplate.class, Method_doRun.class);
+	public static final String M_println = getMethodName(TextTemplate.class, Method_println.class);
 	
 	private static final MTStack<TextTemplate> stack = new MTStack<>();
 	
@@ -2597,9 +2600,6 @@ public final class MakeTextTemplate {
 	public static final String ARG_IN = "-In";
 	public static final String ARG_OUT = "-Out";
 	
-	public static final String M_doRun = getMethodName(TextTemplate.class, Method_doRun.class);
-	public static final String M_println = getMethodName(TextTemplate.class, Method_println.class);
-	
 	public static final void main(final String... args) throws IOException {
 		final var ap = new ArgsParser(args);
 		
@@ -2609,10 +2609,10 @@ public final class MakeTextTemplate {
 		final String generatedClassName_;
 		
 		{
-			var name = removeExtension(ap.getFile(ARG_IN).getName());
+			var name = removeExt(ap.getFile(ARG_IN).getName());
 			
 			if (!ap.getString(ARG_OUT).isBlank()) {
-				name = removeExtension(ap.getFile(ARG_OUT).getName());
+				name = removeExt(ap.getFile(ARG_OUT).getName());
 			}
 			
 			generatedClassName_ = name;
@@ -2676,11 +2676,8 @@ public final class MakeTextTemplate {
 		}.run();
 	}
 	
-	public static final String removeExtension(final String fileName) {
-		return fileName.replaceFirst("\\.[^.]+$", "");
-	}
-	
 }
+
 
 
 
@@ -2693,6 +2690,7 @@ public class ParseCblXref {
 	public static final String ARG_IN = "-In";
 	public static final String ARG_OPS = "-Ops";
 	public static final String ARG_FLOWS = "-Flows";
+	public static final String ARG_FLOWS_GV = "-FlowsGV";
 	
 	public static final void main(final String... args) throws IOException {
 		final var ap = new ArgsParser(args);
@@ -2700,35 +2698,74 @@ public class ParseCblXref {
 		ap.setDefault(ARG_IN, "data/cobol6_xrefvbref.txt");
 		ap.setDefault(ARG_OPS, "data/xref_ops.txt");
 		ap.setDefault(ARG_FLOWS, "data/xref_flows.txt");
+		ap.setDefault(ARG_FLOWS_GV, "data/xref_flows.gv");
+		
+		final List<List<Object>> ops = new ArrayList<>();
+		final List<List<Object>> flows = new ArrayList<>();
 		
 		try (final var opsOut = new PrintStream(ap.getFile(ARG_OPS))) {
 			try (final var flowsOut = new PrintStream(ap.getFile(ARG_FLOWS))) {
-				final List<List<Object>> ops = new ArrayList<>();
-				final List<List<Object>> flows = new ArrayList<>();
-				
-				opsOut.println("Module\tLine\tProc\tVerb\tObj\tOp");
-				flowsOut.println("Module\tProc\tVerb\tSrc\tDst");
-				
 				final var inPath = ap.getPath(ARG_IN);
 				final var files = inPath.toFile().listFiles();
 				
 				if (null != files) {
 					for (final var file : files) {
-						Helpers.dprintlnf("Processing %s...", file);
-						processModule(file.toPath(), ops, flows);
-						printTabbedData(ops, opsOut);
-						printTabbedData(flows, flowsOut);
-						Helpers.dprintlnf("Processing %s... Done", file);
+						process(file.toPath(), ops, flows, opsOut, flowsOut);
 					}
 				} else {
-					Helpers.dprintlnf("Processing %s...", inPath);
-					processModule(inPath, ops, flows);
-					printTabbedData(ops, opsOut);
-					printTabbedData(flows, flowsOut);
-					Helpers.dprintlnf("Processing %s... Done", inPath);
+					process(inPath, ops, flows, opsOut, flowsOut);
 				}
 			}
 		}
+		
+		if (!ap.getString(ARG_FLOWS_GV).isBlank()) {
+			final var gvFile = ap.getFile(ARG_FLOWS_GV);
+			
+			dprintlnf("Generating %s...", gvFile);
+			
+			try (final var gvOut = new PrintStream(gvFile)) {
+				final var gvp = new GraphvizPrinter(gvOut);
+				final var arcToolTips = new LinkedHashMap<List<String>, List<String>>();
+				
+				gvp.begin();
+				
+				flows.forEach(row -> {
+					final var module = Objects.toString(row.get(0));
+					final var proc = Objects.toString(row.get(1));
+					final var verb = Objects.toString(row.get(2));
+					final var src = Objects.toString(row.get(3));
+					final var dst = Objects.toString(row.get(4));
+					
+					gvp.processArc(src, dst);
+					
+					arcToolTips.computeIfAbsent(Arrays.asList(src, dst), __ -> new ArrayList<>())
+					.add(String.format("%sÂ§%s.%s", module, proc, verb));
+				});
+				
+				arcToolTips.forEach((k, v) -> {
+					gvp.processArcProp(k.get(0), k.get(1), "tooltip", String.join("\\n", v));
+				});
+				
+				gvp.end();
+			}
+			
+			dprintlnf("Generating %s... Done", gvFile);
+		}
+	}
+	
+	private static final void process(final Path filePath, final List<List<Object>> ops, final List<List<Object>> flows,
+			final PrintStream opsOut, final PrintStream flowsOut) throws IOException {
+		dprintlnf("Processing %s...", filePath);
+		
+		processModule(filePath, ops, flows);
+		
+		opsOut.println("Module\tLine\tProc\tVerb\tObj\tOp");
+		printTabbedData(ops, opsOut);
+		
+		flowsOut.println("Module\tProc\tVerb\tSrc\tDst");
+		printTabbedData(flows, flowsOut);
+		
+		dprintlnf("Processing %s... Done", filePath);
 	}
 	
 	public static final void printTabbedData(final List<? extends List<?>> rows, final PrintStream out) {
