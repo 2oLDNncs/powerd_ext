@@ -2727,7 +2727,7 @@ public final class GraphOp {
 		
 		ap.setDefault(ARGKEY_ARCS, "data/test_arcs.txt");
 		ap.setDefault(ARGKEY_NODES, "data/test_nodes.txt");
-		ap.setDefault(ARGKEY_OP, Operation.COMP_ARCS);
+		ap.setDefault(ARGKEY_OP, Operation.COMP);
 		ap.setDefault(ARGKEY_TRANS, false);
 		ap.setDefault(ARGKEY_SEP, "\t");
 		
@@ -2791,6 +2791,11 @@ public final class GraphOp {
 				og.forEachPathArcFrom(node, GraphOp::printArc);
 			});
 			break;
+		case COMP:
+			Files.lines(ap.getPath(ARGKEY_NODES)).forEach(node -> {
+				System.out.println(og.getConnectedComponent(node));
+			});
+			break;
 		default:
 			throw new IllegalArgumentException(String.format("operation: %s", operation));
 		}
@@ -2823,7 +2828,8 @@ public final class GraphOp {
 		
 		ALL_HEADS, ALL_TAILS, ROOTS, LEAVES, ARCS, MAX_ARCS, MAX_PATHS,
 		PATHS_TO, PATHS_FROM,
-		ARCS_FROM, ARCS_TO, COMP_ARCS;
+		ARCS_FROM, ARCS_TO, COMP_ARCS,
+		COMP;
 		
 	}
 	
