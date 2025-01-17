@@ -747,8 +747,8 @@ public final class CblXrefParser {
 			final String sLineId = matcher.group(G_DEF_LINE_ID);
 			final int lineId;
 			
-			if (C_EXTERNAL.equals(sLineId)) {
-				lineId = 0;
+			if (C_EXTERNAL.equals(sLineId) || PM_VERBS.equals(this.parseMode)) {
+				lineId = -target.size() - 1;
 			} else {
 				lineId = Integer.parseInt(sLineId);
 			}
@@ -957,8 +957,10 @@ public final class CblXrefParser {
 		return String.format("(?:%s)", regex);
 	}
 	
+	private static final List<Object> emptyContext = Arrays.asList(null, null);
+	
 	public static final void generateFlows(final List<List<Object>> ops, final List<List<Object>> flows) {
-		final List<Object> context = new ArrayList<>(Arrays.asList(null, null));
+		final List<Object> context = new ArrayList<>(emptyContext);
 		final Collection<Object> srcs = new LinkedHashSet<>();
 		final Collection<Object> dsts = new LinkedHashSet<>();
 		
@@ -971,14 +973,7 @@ public final class CblXrefParser {
 			final boolean verbIsValid = null != verb && !"".equals(verb);
 			
 			if (procIsValid && verbIsValid && "".equals(obj)) {
-				srcs.forEach(src -> {
-					dsts.forEach(dst -> {
-						final List<Object> move = new ArrayList<>(context);
-						move.add(src);
-						move.add(dst);
-						flows.add(move);
-					});
-				});
+				updateFlows(context, srcs, dsts, flows);
 				
 				dsts.clear();
 				srcs.clear();
@@ -995,7 +990,12 @@ public final class CblXrefParser {
 			}
 		});
 		
-		if (!context.isEmpty()) {
+		updateFlows(context, srcs, dsts, flows);
+	}
+	
+	private static final void updateFlows(final Collection<Object> context, final Iterable<Object> srcs,
+			final Iterable<Object> dsts, final List<List<Object>> flows) {
+		if (!emptyContext.equals(context)) {
 			srcs.forEach(src -> {
 				dsts.forEach(dst -> {
 					final List<Object> move = new ArrayList<>(context);
@@ -1739,6 +1739,79 @@ public abstract class JavaTemplate extends TextTemplate {
 
 
 /**
+ * @author 2oLDNncs 20250114
+ */
+public abstract class JclTemplate extends TextTemplate {
+	
+	protected String jobName = "MYJOB001";
+	
+	public JclTemplate() {
+		
+	}
+	
+	@Override
+	protected void doRun() {
+		this.printCard(this.jobName, "JOB", "ABC", null);
+	}
+	
+	protected final void printCard(final String name, final String type, final Object... paramKVs) {
+		final StringBuilder line = new StringBuilder();
+		
+		line.append(String.format("//%-8s %s ", name, type));
+		
+		final int alignment = line.length();
+		final List<String> params = params(paramKVs);
+		
+		for (int i = 0; i < params.size(); i += 1) {
+			int newLineLength = line.length() + params.get(i).length();
+			final boolean commaNeeded = i + 1 < params.size();
+			
+			if (commaNeeded) {
+				newLineLength += 1;
+			}
+			
+			if (71 < newLineLength) {
+				this.println(line);
+				line.setLength(0);
+				line.append(String.format("//%" + (alignment - 2) + "s", ""));
+			}
+			
+			line.append(params.get(i));
+			
+			if (commaNeeded) {
+				line.append(",");
+			}
+		}
+		
+		this.println(line);
+	}
+	
+	private static final List<String> params(final Object... kvs) {
+		final List<String> result = new ArrayList<>();
+		final StringBuilder entry = new StringBuilder();
+		
+		for (int i = 0; i < kvs.length; i += 2) {
+			final Object k = kvs[i];
+			final Object v = kvs[i + 1];
+			
+			entry.setLength(0);
+			entry.append(k);
+			
+			if (null != v) {
+				entry.append('=');
+				entry.append(v);
+			}
+			
+			result.add(entry.toString());
+		}
+		
+		return result;
+	}
+	
+}
+
+
+/**
  * @author 2oLDNncs 20240608
  *
  * @param <V>
@@ -1751,12 +1824,24 @@ public final class OrientedGraph<V> implements Serializable {
 	
 	private final boolean transitive;
 	
+	private CycleHandling cycleHandling;
+	
 	public OrientedGraph(final boolean transitive) {
 		this.transitive = transitive;
+		
+		this.setCycleHandling(CycleHandling.THROW_EXCEPTION);
 	}
 	
 	public final boolean isTransitive() {
 		return this.transitive;
+	}
+	
+	public final CycleHandling getCycleHandling() {
+		return this.cycleHandling;
+	}
+	
+	public final void setCycleHandling(final CycleHandling cycleHandling) {
+		this.cycleHandling = Objects.requireNonNull(cycleHandling);
 	}
 	
 	public final void connect(final V tail, final V head) {
@@ -1825,12 +1910,39 @@ public final class OrientedGraph<V> implements Serializable {
 		});
 	}
 	
+	public final void forEachMaxPathArc(final BiConsumer<V, V> action) {
+		this.forEachMaxPath(path -> {
+			forEachPathArc(path, action);
+		});
+	}
+	
 	public final void forEachPathFrom(final V head, final Consumer<List<V>> action) {
 		this.new OutgoingPathFinder().forEachPath(head, action);
 	}
 	
+	public final void forEachPathArcFrom(final V head, final BiConsumer<V, V> action) {
+		this.forEachPathFrom(head, path -> {
+			forEachPathArc(path, action);
+		});
+	}
+	
 	public final void forEachPathTo(final V tail, final Consumer<List<V>> action) {
 		this.new IncomingPathFinder().forEachPath(tail, action);
+	}
+	
+	public final void forEachPathArcTo(final V tail, final BiConsumer<V, V> action) {
+		this.forEachPathTo(tail, path -> {
+			forEachPathArc(path, action);
+		});
+	}
+	
+	public final Collection<V> getConnectedComponent(final V vertex) {
+		final Collection<V> result = new LinkedHashSet<>();
+		
+		this.forEachPathTo(vertex, result::addAll);
+		this.forEachPathFrom(vertex, result::addAll);
+		
+		return result;
 	}
 	
 	private final void addArc(final V tail, final V head) {
@@ -1863,7 +1975,7 @@ public final class OrientedGraph<V> implements Serializable {
 	private final class OutgoingPathFinder extends PathFinder<V> {
 		
 		public OutgoingPathFinder() {
-			super(OrientedGraph.this.getLeaves());
+			super(OrientedGraph.this.getLeaves(), OrientedGraph.this.getCycleHandling());
 		}
 		
 		@Override
@@ -1896,7 +2008,7 @@ public final class OrientedGraph<V> implements Serializable {
 	private final class IncomingPathFinder extends PathFinder<V> {
 		
 		public IncomingPathFinder() {
-			super(OrientedGraph.this.getRoots());
+			super(OrientedGraph.this.getRoots(), OrientedGraph.this.getCycleHandling());
 		}
 		
 		@Override
@@ -1970,6 +2082,12 @@ public final class OrientedGraph<V> implements Serializable {
 		return new HashSet<>(source);
 	}
 	
+	public static final <V> void forEachPathArc(final List<V> path, final BiConsumer<V, V> action) {
+		for (int i = 0; i + 1 < path.size(); i += 1) {
+			action.accept(path.get(i), path.get(i + 1));
+		}
+	}
+	
 	/**
 	 * @author 2oLDNncs 20240621
 	 *
@@ -1981,18 +2099,21 @@ public final class OrientedGraph<V> implements Serializable {
 		
 		private final Collection<V> ends;
 		
-		protected PathFinder(final Collection<V> ends) {
+		private final CycleHandling cycleHandling;
+		
+		protected PathFinder(final Collection<V> ends, final CycleHandling cycleHandling) {
 			this.ends = ends;
+			this.cycleHandling = cycleHandling;
 		}
 		
 		public final void forEachPath(final V anchor, final Consumer<List<V>> action) {
-			this.begin(anchor);
-			
-			this.getNextVertices(anchor).forEach(v -> {
-				this.forEachPath(v, action);
-			});
-			
-			this.end(action);
+			if (this.begin(anchor)) {
+				this.getNextVertices(anchor).forEach(v -> {
+					this.forEachPath(v, action);
+				});
+				
+				this.end(action);
+			}
 		}
 		
 		protected abstract Object[] getCycleExceptionMessageArgs(Object path, Object vertex);
@@ -2003,28 +2124,62 @@ public final class OrientedGraph<V> implements Serializable {
 		
 		protected abstract int getRemovalIndex(int pathSize);
 		
-		private final void begin(final V vertex) {
+		private final boolean begin(final V vertex) {
 			if (this.path.contains(vertex)) {
-				throw new IllegalStateException(
-						String.format("Cycle detected : %s -> %s",
-								this.getCycleExceptionMessageArgs(this.path, vertex)));
+				this.cycleDetected(this.path, vertex);
+				
+				return false;
 			}
 			
 			this.path.add(this.getInsertionIndex(this.path.size()), vertex);
+			
+			return true;
+		}
+		
+		protected void cycleDetected(final Object path, final Object vertex) {
+			if (CycleHandling.IGNORE.equals(this.cycleHandling)) {
+				return;
+			}
+			
+			final String message = String.format("Cycle detected: %s -> %s",
+					this.getCycleExceptionMessageArgs(this.path, vertex));
+			
+			switch (this.cycleHandling) {
+			case THROW_EXCEPTION:
+				throw new IllegalStateException(message);
+			case PRINT_WARNING:
+				System.err.println(message);
+				break;
+			default:
+				throw new UnsupportedOperationException(
+						String.format("%s: %s", this.cycleHandling, message));
+			}
 		}
 		
 		private final void end(final Consumer<List<V>> action) {
 			final int i = this.getRemovalIndex(this.path.size());
-			final V e = this.path.get(i);
 			
-			if (this.ends.contains(e)) {
-				action.accept(this.path);
+			if (0 <= i) {
+				final V e = this.path.get(i);
+				
+				if (this.ends.contains(e)) {
+					action.accept(this.path);
+				}
+				
+				this.path.remove(i);
 			}
-			
-			this.path.remove(i);
 		}
 		
 		private static final long serialVersionUID = -2445477282075393002L;
+		
+	}
+	
+	/**
+	 * @author 2oLDNncs 20250117
+	 */
+	public static enum CycleHandling {
+		
+		THROW_EXCEPTION, PRINT_WARNING, IGNORE;
 		
 	}
 	
@@ -2564,6 +2719,128 @@ public abstract class TextTemplatePrinter {
 
 
 
+
+/**
+ * @author 2oLDNncs 20240608
+ */
+@Debug
+public final class GraphOp {
+	
+	static final String ARGKEY_ARCS = "-Arcs";
+	static final String ARGKEY_NODES = "-Nodes";
+	static final String ARGKEY_OP = "-Op";
+	static final String ARGKEY_SEP = "-Sep";
+	static final String ARGKEY_TRANS = "-Trans";
+	
+	public static final void main(final String[] args) throws IOException {
+		final ArgsParser ap = new ArgsParser(args);
+		
+		ap.setDefault(ARGKEY_ARCS, "data/test_arcs.txt");
+		ap.setDefault(ARGKEY_NODES, "data/test_nodes.txt");
+		ap.setDefault(ARGKEY_OP, Operation.COMP_ARCS);
+		ap.setDefault(ARGKEY_TRANS, false);
+		ap.setDefault(ARGKEY_SEP, "\t");
+		
+		final Operation operation = ap.getEnum(ARGKEY_OP);
+		final boolean transitive = ap.getBoolean(ARGKEY_TRANS);
+		final String separator = ap.getString(ARGKEY_SEP);
+		final Path inputFilePath = ap.getPath(ARGKEY_ARCS);
+		final OrientedGraph<Object> og = newOrientedGraph(inputFilePath, transitive, separator);
+		
+		og.setCycleHandling(CycleHandling.PRINT_WARNING);
+		
+		dprintlnf("Operation: %s", operation);
+		
+		switch (operation) {
+		case ALL_HEADS:
+			og.getAllHeads().forEach(System.out::println);
+			break;
+		case ALL_TAILS:
+			og.getAllTails().forEach(System.out::println);
+			break;
+		case ROOTS:
+			og.getRoots().forEach(System.out::println);
+			break;
+		case LEAVES:
+			og.getLeaves().forEach(System.out::println);
+			break;
+		case ARCS:
+			og.forEachArc(GraphOp::printArc);
+			break;
+		case MAX_ARCS:
+			og.forEachMaxArc(GraphOp::printArc);
+			break;
+		case MAX_PATHS:
+			og.forEachMaxPath(System.out::println);
+			break;
+		case PATHS_TO:
+			Files.lines(ap.getPath(ARGKEY_NODES)).forEach(node -> {
+				og.forEachPathTo(node, System.out::println);
+			});
+			break;
+		case PATHS_FROM:
+			Files.lines(ap.getPath(ARGKEY_NODES)).forEach(node -> {
+				og.forEachPathFrom(node, System.out::println);
+			});
+			break;
+		case ARCS_FROM:
+			Files.lines(ap.getPath(ARGKEY_NODES)).forEach(node -> {
+				og.forEachPathArcFrom(node, GraphOp::printArc);
+			});
+			break;
+		case ARCS_TO:
+			Files.lines(ap.getPath(ARGKEY_NODES)).forEach(node -> {
+				og.forEachPathArcTo(node, GraphOp::printArc);
+			});
+			break;
+		case COMP_ARCS:
+			Files.lines(ap.getPath(ARGKEY_NODES)).forEach(node -> {
+				og.forEachPathArcTo(node, GraphOp::printArc);
+			});
+			Files.lines(ap.getPath(ARGKEY_NODES)).forEach(node -> {
+				og.forEachPathArcFrom(node, GraphOp::printArc);
+			});
+			break;
+		default:
+			throw new IllegalArgumentException(String.format("operation: %s", operation));
+		}
+	}
+	
+	public static final OrientedGraph<Object> newOrientedGraph(final Path inputFilePath,
+			final boolean transitive, final String separator)
+			throws IOException {
+		final OrientedGraph<Object> result = new OrientedGraph<>(transitive);
+		
+		Files.lines(inputFilePath).forEach(line -> {
+			final int i = line.indexOf(separator);
+			
+			result.connect(line.substring(0, i), line.substring(i + 1));
+		});
+		
+		return result;
+	}
+	
+	public static final void printArc(final Object head, final Object tail) {
+		System.out.print(head);
+		System.out.print('\t');
+		System.out.println(tail);
+	}
+	
+	/**
+	 * @author 2oLDNncs 20240608
+	 */
+	public static enum Operation {
+		
+		ALL_HEADS, ALL_TAILS, ROOTS, LEAVES, ARCS, MAX_ARCS, MAX_PATHS,
+		PATHS_TO, PATHS_FROM,
+		ARCS_FROM, ARCS_TO, COMP_ARCS;
+		
+	}
+	
+}
+
+
+
 /**
  * @author 2oLDNncs 20241228
  */
@@ -2746,13 +3023,15 @@ public class ParseCblXref {
 					final String src = Objects.toString(row.get(3));
 					final String dst = Objects.toString(row.get(4));
 					
-					gvp.processArc(src, dst);
-					
 					arcToolTips.computeIfAbsent(Arrays.asList(src, dst), __ -> new ArrayList<>())
-					.add(String.format("%sÂ§%s.%s", module, proc, verb));
+					.add(String.format("%s§%s.%s", module, proc, verb));
 				});
 				
 				arcToolTips.forEach((k, v) -> {
+					final String src = k.get(0);
+					final String dst = k.get(1);
+					
+					gvp.processArc(src, dst);
 					gvp.processArcProp(k.get(0), k.get(1), "tooltip", String.join("\\n", v));
 				});
 				
@@ -2842,7 +3121,7 @@ public class XSSFWorkbookToGraphviz {
 	public static final String ARG_RANKDIR = "-Rankdir";
 	public static final String ARG_OUT = "-Out";
 	
-	public static final void main(final String[] args) throws InvalidFormatException, IOException {
+	public static final void main(final String... args) throws InvalidFormatException, IOException {
 		final ArgsParser ap = new ArgsParser(args);
 		
 		ap.setDefault(ARG_IN, "data/test_gv.xlsx");
