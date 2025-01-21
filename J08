@@ -165,6 +165,10 @@ public abstract class CblTemplate extends TextTemplate {
 	
 	protected boolean hasLinkageSection = false;
 	
+	private final Map<String, CblXrefParser.Def> verbs = new TreeMap<>();
+	private final Map<String, CblXrefParser.Def> items = new LinkedHashMap<>();
+	private final Map<String, CblXrefParser.Def> procs = new LinkedHashMap<>();
+	
 	protected CblTemplate() {
 		super();
 		this.indt = cast(this.getPrinter());
@@ -348,8 +352,8 @@ public abstract class CblTemplate extends TextTemplate {
 	}
 	
 	protected void printProcedureCode() {
-		this.println("DISPLAY 'Hello World.'");
-		this.println("GOBACK");
+		this.printStmt(VERB_DISPLAY, "'Hello World.'");
+		this.printStmt(VERB_GOBACK);
 	}
 	
 	protected void printParagraphs() {
@@ -362,6 +366,10 @@ public abstract class CblTemplate extends TextTemplate {
 	
 	protected void printParagraph(final String paragraphName, final Runnable block) {
 		this.printFullLine(SEPARATOR_LINE);
+		this.procs.put(paragraphName, new CblXrefParser.Def(
+				this.getPrinter().getCurrentLineNumber(),
+				CblXrefParser.PM_PROCEDURES,
+				paragraphName));
 		this.printlnf("%s.", paragraphName);
 		this.printFullLine(SEPARATOR_LINE);
 		
@@ -398,12 +406,76 @@ public abstract class CblTemplate extends TextTemplate {
 		}
 	}
 	
+	protected void printStmt(final String verb, final String... args) {
+		this.addRefTo(this.getDef(this.verbs, verb), "");
+		
+		switch (verb) {
+		case VERB_PERFORM:
+			if (1 == args.length) {
+				this.addRefTo(this.getDef(this.procs, args[0]), CblXrefParser.U_PERFORM);
+			}
+			break;
+		case VERB_DISPLAY:
+			for (final String item : args) {
+				this.addRefTo(this.getDef(this.items, item), CblXrefParser.U_READ);
+			}
+			break;
+		}
+		
+		// TODO separate args into multiple lines
+		
+		this.printlnf("%s %s", verb, String.join(" ", args));
+	}
+	
+	private final CblXrefParser.Def getDef(final Map<String, CblXrefParser.Def> map, final String name) {
+		final String type;
+		
+		if (this.verbs.equals(map)) {
+			type = CblXrefParser.PM_VERBS;
+		} else if (this.items.equals(map)) {
+			type = CblXrefParser.PM_VERBS;
+		} else if (this.procs.equals(map)) {
+			type = CblXrefParser.PM_PROCEDURES;
+		} else {
+			throw new IllegalArgumentException("Unhandled map");
+		}
+		
+		return map.computeIfAbsent(name, k -> new CblXrefParser.Def(0, type, k));
+	}
+	
+	private final void addRefTo(final CblXrefParser.Def def, final String usage) {
+		def.getRefs().add(new CblXrefParser.Ref(
+				this.getPrinter().getCurrentLineNumber(),
+				usage));
+	}
+	
 	protected static final String CBL_COLS       = "----+-*--1----+----2----+----3----+----4----+----5----+----6----+----7--";
 	protected static final String SEPARATOR_LINE = "      *=================================================================";
 	protected static final char INDICATOR_NONE         = ' ';
 	protected static final char INDICATOR_CONTINUATION = '-';
 	protected static final char INDICATOR_COMMENT      = '*';
 	protected static final char INDICATOR_DEBUG        = 'D';
+	
+	public static final String VERB_ACCEPT = "ACCEPT";
+	public static final String VERB_ADD = "ADD";
+	public static final String VERB_CALL = "CALL";
+	public static final String VERB_CONTINUE = "CONTINUE";
+	public static final String VERB_DISPLAY = "DISPLAY";
+	public static final String VERB_DIVIDE = "DIVIDE";
+	public static final String VERB_EVALUATE = "EVALUATE";
+	public static final String VERB_GOBACK = "GOBACK";
+	public static final String VERB_IF = "IF";
+	public static final String VERB_MOVE = "MOVE";
+	public static final String VERB_MULTIPLY = "MULTIPLY";
+	public static final String VERB_PERFORM = "PERFORM";
+	public static final String VERB_SET = "SET";
+	public static final String VERB_STRING = "STRING";
+	public static final String VERB_SUBTRACT = "SUBTRACT";
+	
+	public static final String KW_BY = "BY";
+	public static final String KW_FROM = "FROM";
+	public static final String KW_INTO = "INTO";
+	public static final String KW_TO = "TO";
 	
 	public static final String M_printFullLine = getMethodName(
 			CblTemplate.class, Method_printFullLine.class);
@@ -957,7 +1029,7 @@ public final class CblXrefParser {
 		return String.format("(?:%s)", regex);
 	}
 	
-	private static final List<Object> emptyContext = Arrays.asList(null, null);
+	private static final List<Object> emptyContext = Arrays.asList(null, null, null);
 	
 	public static final void generateFlows(final List<List<Object>> ops, final List<List<Object>> flows) {
 		final List<Object> context = new ArrayList<>(emptyContext);
@@ -965,20 +1037,16 @@ public final class CblXrefParser {
 		final Collection<Object> dsts = new LinkedHashSet<>();
 		
 		ops.forEach(row -> {
-			final Object proc = row.get(1);
-			final Object verb = row.get(2);
+			final Object lineId = row.get(0);
 			final Object obj = row.get(3);
 			
-			final boolean procIsValid = null != proc && !"".equals(proc);
-			final boolean verbIsValid = null != verb && !"".equals(verb);
-			
-			if (procIsValid && verbIsValid && "".equals(obj)) {
+			if (!lineId.equals(context.get(0)) && "".equals(obj)) {
 				updateFlows(context, srcs, dsts, flows);
 				
 				dsts.clear();
 				srcs.clear();
 				context.clear();
-				context.addAll(row.subList(1, 3));
+				context.addAll(row.subList(0, 3));
 			}
 			
 			final Object op = row.get(4);
@@ -993,12 +1061,15 @@ public final class CblXrefParser {
 		updateFlows(context, srcs, dsts, flows);
 	}
 	
-	private static final void updateFlows(final Collection<Object> context, final Iterable<Object> srcs,
+	private static final void updateFlows(final List<Object> context, final Iterable<Object> srcs,
 			final Iterable<Object> dsts, final List<List<Object>> flows) {
-		if (!emptyContext.equals(context)) {
+		final Object verb = context.get(2);
+		final boolean verbIsValid = null != verb && !"".equals(verb);
+		
+		if (verbIsValid) {
 			srcs.forEach(src -> {
 				dsts.forEach(dst -> {
-					final List<Object> move = new ArrayList<>(context);
+					final List<Object> move = new ArrayList<>(context.subList(1, 3));
 					move.add(src);
 					move.add(dst);
 					flows.add(move);
@@ -2671,17 +2742,25 @@ public final class TextTemplateIndenter extends TextTemplatePrinter {
 }
 
 
+
 /**
  * @author 2oLDNncs 20241228
  */
+@Debug(false)
 public abstract class TextTemplatePrinter {
 	
 	private final PrintStream out;
 	
 	private boolean newLine = true;
 	
+	private int currentLineNumber = 1;
+	
 	public TextTemplatePrinter(final PrintStream out) {
 		this.out = out;
+	}
+	
+	public final int getCurrentLineNumber() {
+		return this.currentLineNumber;
 	}
 	
 	public final void print(final Object x) {
@@ -2703,15 +2782,16 @@ public abstract class TextTemplatePrinter {
 		//pass
 	}
 	
-	private void beforePrint() {
+	private final void beforePrint() {
 		if (this.newLine) {
 			this.newLine = false;
 			this.beforeLine();
 		}
 	}
 	
-	private void afterPrintln() {
+	private final void afterPrintln() {
 		this.newLine = true;
+		this.currentLineNumber += 1;
 		this.afterLine();
 	}
 	
@@ -2737,7 +2817,7 @@ public final class GraphOp {
 		
 		ap.setDefault(ARGKEY_ARCS, "data/test_arcs.txt");
 		ap.setDefault(ARGKEY_NODES, "data/test_nodes.txt");
-		ap.setDefault(ARGKEY_OP, Operation.COMP);
+		ap.setDefault(ARGKEY_OP, Operation.COMP_ARCS);
 		ap.setDefault(ARGKEY_TRANS, false);
 		ap.setDefault(ARGKEY_SEP, "\t");
 		
@@ -2988,7 +3068,7 @@ public class ParseCblXref {
 	public static final void main(final String... args) throws IOException {
 		final ArgsParser ap = new ArgsParser(args);
 		
-		ap.setDefault(ARG_IN, "data/cobol6_xrefvbref.txt");
+		ap.setDefault(ARG_IN, "data/test_xref.txt");
 		ap.setDefault(ARG_OPS, "data/xref_ops.txt");
 		ap.setDefault(ARG_FLOWS, "data/xref_flows.txt");
 		ap.setDefault(ARG_FLOWS_GV, "data/xref_flows.gv");
@@ -2997,7 +3077,11 @@ public class ParseCblXref {
 		final List<List<Object>> flows = new ArrayList<>();
 		
 		try (final PrintStream opsOut = new PrintStream(ap.getFile(ARG_OPS))) {
+			opsOut.println("Module\tLine\tProc\tVerb\tObj\tOp");
+			
 			try (final PrintStream flowsOut = new PrintStream(ap.getFile(ARG_FLOWS))) {
+				flowsOut.println("Module\tProc\tVerb\tSrc\tDst");
+				
 				final Path inPath = ap.getPath(ARG_IN);
 				final File[] files = inPath.toFile().listFiles();
 				
@@ -3048,16 +3132,26 @@ public class ParseCblXref {
 		}
 	}
 	
+	private static final <E, K> void groupBy(final Collection<E> elements,
+			final Function<E, K> key,
+			final Map<K, List<E>> result) {
+		groupBy(elements, key, __ -> new ArrayList<>(), result);
+	}
+	
+	private static final <E, K, C extends Collection<E>> void groupBy(final Iterable<E> elements,
+			final Function<E, K> key, final Function<K, C> grouping,
+			final Map<K, C> result) {
+		elements.forEach(e -> result.computeIfAbsent(key.apply(e), grouping).add(e));
+	}
+	
 	private static final void process(final Path filePath, final List<List<Object>> ops, final List<List<Object>> flows,
 			final PrintStream opsOut, final PrintStream flowsOut) throws IOException {
 		dprintlnf("Processing %s...", filePath);
 		
 		processModule(filePath, ops, flows);
 		
-		opsOut.println("Module\tLine\tProc\tVerb\tObj\tOp");
 		printTabbedData(ops, opsOut);
 		
-		flowsOut.println("Module\tProc\tVerb\tSrc\tDst");
 		printTabbedData(flows, flowsOut);
 		
 		dprintlnf("Processing %s... Done", filePath);
