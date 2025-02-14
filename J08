@@ -3578,7 +3578,13 @@ public final class ParseSysadata {
 					result.getRecHeader().vDataRecordEditionLevel,
 					result.getRecHeader().vDataLength);
 			
+			final byte[] hBytes = result.getRecHeader().buffer.cloneBytes();
+			
 			result.getRecData().read(rc);
+			
+			final byte[] dBytes = result.getRecData().buffer.cloneBytes();
+			
+			System.out.println("(Rec.read)" + Arrays.toString(hBytes) + dBytes.length + Arrays.toString(dBytes));
 			
 			return result;
 		}
@@ -3751,8 +3757,8 @@ public final class ParseSysadata {
 		}
 		
 		protected final Buffer.Region newDynamicFixedLengthRegion(final int length) {
-			if (this.buffer.bytes.length < this.getDynamicRegionGenerator().getTotalLength() + length) {
-				this.buffer.insertBytes(this.buffer.bytes.length, length);
+			if (this.buffer.getLength() < this.getDynamicRegionGenerator().getTotalLength() + length) {
+				this.buffer.insertBytes(this.buffer.getLength(), length);
 			}
 			
 			return this.getDynamicRegionGenerator().newFixedLength(length);
@@ -4106,6 +4112,8 @@ public final class ParseSysadata {
 		
 		private final boolean littleEndian;
 		
+		private int lengthLimit = Integer.MAX_VALUE;
+		
 		public Buffer(final int length, final boolean littleEndian) {
 			this.bytes = new byte[length];
 			this.littleEndian = littleEndian;
@@ -4113,6 +4121,22 @@ public final class ParseSysadata {
 		
 		public final boolean isLittleEndian() {
 			return this.littleEndian;
+		}
+		
+		public final byte[] cloneBytes() {
+			return this.bytes.clone();
+		}
+		
+		public final int getLength() {
+			return this.bytes.length;
+		}
+		
+		public final int getLengthLimit() {
+			return this.lengthLimit;
+		}
+		
+		public final void setLengthLimit(final int lengthLimit) {
+			this.lengthLimit = lengthLimit;
 		}
 		
 		public final void setStr(final Region region, final String value) {
@@ -4150,6 +4174,10 @@ public final class ParseSysadata {
 		}
 		
 		private final void insertBytes(final int offset, final int length) {
+			if ((long) this.getLengthLimit() < (long) offset + length) {
+				throw new IllegalStateException();
+			}
+			
 			final byte[] newBytes = new byte[this.bytes.length + length];
 			
 			System.arraycopy(this.bytes, 0, newBytes, 0, offset);
@@ -4308,10 +4336,10 @@ public final class ParseSysadata {
 			 */
 			public static final class Generator {
 				
-				private Region currentLast;
+				private Region last;
 				
 				public final int getTotalLength() {
-					return getNextOffset(this.currentLast);
+					return getNextOffset(this.last);
 				}
 				
 				public final Buffer.Region newFixedLength(final int length) {
@@ -4327,28 +4355,28 @@ public final class ParseSysadata {
 				}
 				
 				private final Offset newOffset() {
-					if (null == this.currentLast) {
+					if (null == this.last) {
 						return new AbsoluteOffset(0);
-					} else if (this.currentLast.isAbsoluteOffset() && this.currentLast.isFixedLength()) {
-						return new AbsoluteOffset(this.currentLast.getNextOffset());
+					} else if (this.last.isAbsoluteOffset() && this.last.isFixedLength()) {
+						return new AbsoluteOffset(this.last.getNextOffset());
 					}
 					
-					return new RelativeOffset(this.currentLast);
+					return new RelativeOffset(this.last);
 				}
 				
 				@Override
 				public final Generator clone() {
 					final Generator result = new Generator();
 					
-					result.currentLast = this.currentLast;
+					result.last = this.last;
 					
 					return result;
 				}
 				
 				private final Region newRegion(final Offset offset, final Length length) {
-					this.currentLast = new Region(offset, length);
+					this.last = new Region(offset, length);
 					
-					return this.currentLast;
+					return this.last;
 				}
 				
 				private static final int getNextOffset(final Region region) {
@@ -7167,16 +7195,16 @@ public final class ParseSysadata {
 		public final StringVar                          vAssignmentName            = this.vPictureDataString;
 		public final IntListVar                         vIndexIdList               = this.newIntListVarV(INDEX_COUNT);
 		public final LongListVar                        vKeys                      = this.newLongListVarV(KEYS_COUNT);
-		public final EnumVar<SignClause>                vKeySequence               = this.newEnumVar(1, SignClause.decoder);
-		private final StringVar                         vReserved02                = this.newStringVarF(3);
-		public final LongVar                            vKeyId                     = this.newLongVar(4);
+//		public final EnumVar<KeySequence>               vKeySequence               = this.newEnumVar(1, KeySequence.decoder);
+//		private final StringVar                         vReserved02                = this.newStringVarF(3);
+//		public final LongVar                            vKeyId                     = this.newLongVar(4);
 		public final StringVar                          vInitialValueData          = this.newStringVarV(INITIAL_VALUE_LENGTH_or_EXTERNAL_CLASS_NAME_LENGTH);
 		//TODO 4 subfields of vInitialValueData : 1st value length+data, 2nd value length+data
 		public final StringVar                          vExternalClassName         = vInitialValueData;
 		
 		public RecData_Symbol(final Buffer buffer) {
 			super(buffer);
-			Helpers.ignore(this.vReserved02);
+//			Helpers.ignore(this.vReserved02);
 		}
 		
 		private static final Buffer.Region.Generator staticRegionGenerator =
@@ -7821,7 +7849,7 @@ public final class ParseSysadata {
 		private static final Buffer.Region LIBRARY_VOLUME_LENGTH = staticRegionGenerator.newFixedLength(2);
 		private static final Buffer.Region CONCATENATION_NUMBER  = staticRegionGenerator.newFixedLength(2);
 		private static final Buffer.Region LIBRARY_DDNAME_LENGTH = staticRegionGenerator.newFixedLength(2);
-		private static final Buffer.Region RESERVED_01           = staticRegionGenerator.newFixedLength(2);
+		private static final Buffer.Region RESERVED_01           = staticRegionGenerator.newFixedLength(4);
 		
 		static {
 			Helpers.ignore(RESERVED_01);
@@ -8340,22 +8368,28 @@ public final class ParseSysadata {
 		public final IntVar                vDataRecordEditionLevel = this.newIntVar(DATA_REC_EDIT_LEVEL);
 		public final IntVar                vDataLength             = this.newIntVar(DATA_LENGTH);
 		
+		private int expectedRecDataLength = -1;
+		
 		public RecHeader() {
 			super(new Buffer(staticRegionGenerator.getTotalLength(), false));
-			this.vDataArchitectureLevel.set(3);
 		}
 		
 		@Override
 		protected final void afterRead() {
-			final int dataLength = this.vDataLength.get();
+			this.expectedRecDataLength = this.vDataLength.get();
 			final RecordType recordType = this.vRecordType.get();
 			final int recDataMinimumLength = recordType.getRecDataMinimumLength();
 			
-			if (dataLength < recDataMinimumLength) {
-				System.err.println(Arrays.toString(this.buffer.bytes));
+			if (this.expectedRecDataLength < recDataMinimumLength) {
+				System.err.println(Arrays.toString(this.buffer.cloneBytes()));
 				throw new IllegalStateException(String.format("DataLength(%s) < RecordType(%s).MinimumLength(%s)",
-						dataLength, recordType, recDataMinimumLength));
+						this.expectedRecDataLength, recordType, recDataMinimumLength));
 			}
+		}
+		
+		@Override
+		protected final void beforeWrite() {
+			this.vDataArchitectureLevel.set(3);
 		}
 		
 		public final RecData newRecData() {
@@ -8363,7 +8397,20 @@ public final class ParseSysadata {
 			final int bufferLength = Math.max(recordType.getRecDataMinimumLength(), this.vDataLength.get());
 			final Buffer buffer = new Buffer(bufferLength, this.vLittleEndian.get());
 			
-			return recordType.newRecData(buffer);
+			if (0 <= this.expectedRecDataLength) {
+				buffer.setLengthLimit(expectedRecDataLength);
+			}
+			
+			final RecData result = recordType.newRecData(buffer);
+			
+			if (0 <= this.expectedRecDataLength && this.expectedRecDataLength != buffer.getLength()) {
+				throw new IllegalStateException(String.format("Expected data length: %s Actual: %s",
+						this.expectedRecDataLength, buffer.getLength()));
+			}
+			
+			buffer.setLengthLimit(Integer.MAX_VALUE);
+			
+			return result;
 		}
 		
 		private static final Buffer.Region.Generator staticRegionGenerator =
