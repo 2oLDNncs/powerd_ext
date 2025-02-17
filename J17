@@ -1004,27 +1004,42 @@ public final class CblXrefParser {
 				matcher = null;
 			}
 		}
+		
+		if (null == matcher) {
+			matcher = P_PROCEDURE.matcher(line);
+			
+			if (matcher.matches()) {
+//				TODO Determine lineId
+//				this.addNewDef(this.procedures, sLineId, CblConstants.KW_PROCEDURE);
+			} else {
+				matcher = null;
+			}
+		}
 	}
 	
-	private final void addNewDef(Matcher matcher) {
+	private final void addNewDef(final Matcher matcher) {
 		final Map<Integer, Def> target = this.selectParseTarget();
 		
 		if (null != target) {
 			final var sLineId = matcher.group(G_DEF_LINE_ID);
-			final int lineId;
-			
-			if (C_EXTERNAL.equals(sLineId) || PM_VERBS.equals(this.parseMode)) {
-				lineId = -target.size() - 1;
-			} else {
-				lineId = Integer.parseInt(sLineId);
-			}
-			
 			final var name = matcher.group(G_DEF_NAME);
 			
-			this.currentDef = new Def(lineId, this.parseMode, name);
-			
-			target.put(this.currentDef.getId(), this.currentDef);
+			this.addNewDef(target, sLineId, name);
 		}
+	}
+	
+	private final void addNewDef(final Map<Integer, Def> target, final String sLineId, final String name) {
+		final int lineId;
+		
+		if (C_EXTERNAL.equals(sLineId) || PM_VERBS.equals(this.parseMode)) {
+			lineId = -target.size() - 1;
+		} else {
+			lineId = Integer.parseInt(sLineId);
+		}
+		
+		this.currentDef = new Def(lineId, this.parseMode, name);
+		
+		target.put(this.currentDef.getId(), this.currentDef);
 	}
 	
 	private final Map<Integer, Def> selectParseTarget() {
@@ -1126,6 +1141,9 @@ public final class CblXrefParser {
 							" ",
 							R_REF))))), // References
 			Pattern.CASE_INSENSITIVE);
+	public static final Pattern P_PROCEDURE = Pattern.compile(
+			rgxStart(rgxSeq("  ", rgxRep(21, 21, "."), rgxRepN(1, " "), CblConstants.KW_PROCEDURE)),
+			Pattern.CASE_INSENSITIVE);
 	
 	private static final String rgxRep01(final String regex) {
 		return rgxRep(0, 1, regex);
@@ -1160,6 +1178,10 @@ public final class CblXrefParser {
 		
 		if (0 == min && 1 == max) {
 			return String.format("%s?", grp);
+		}
+		
+		if (min == max) {
+			return String.format("%s{%s}", grp, min);
 		}
 		
 		return String.format("%s{%s,%s}", grp, min, max);
@@ -3263,6 +3285,7 @@ public class ParseCblXref {
 	public static final String ARG_IN = "-In";
 	public static final String ARG_OPS = "-Ops";
 	public static final String ARG_FLOWS = "-Flows";
+	public static final String ARG_MORE_FLOWS = "-MoreFlows";
 	public static final String ARG_FLOWS_GV = "-FlowsGV";
 	
 	public static final void main(final String... args) throws IOException {
@@ -3271,6 +3294,7 @@ public class ParseCblXref {
 		ap.setDefault(ARG_IN, "data/test_xref.txt");
 		ap.setDefault(ARG_OPS, "data/xref_ops.txt");
 		ap.setDefault(ARG_FLOWS, "data/xref_flows.txt");
+		ap.setDefault(ARG_MORE_FLOWS, "");
 		ap.setDefault(ARG_FLOWS_GV, "data/xref_flows.gv");
 		
 		final List<List<Object>> ops = new ArrayList<>();
@@ -3293,6 +3317,19 @@ public class ParseCblXref {
 					process(inPath, ops, flows, opsOut, flowsOut);
 				}
 			}
+		}
+		
+		if (!ap.getString(ARG_MORE_FLOWS).isBlank()) {
+			Files.lines(ap.getPath(ARG_MORE_FLOWS))
+			.forEach(line -> {
+				final var flow = Arrays.asList((Object[]) line.split("\t"));
+				
+				if (flow.size() < 5) {
+					throw new IllegalStateException(String.format("Invalid additional flow: %s", flow));
+				}
+				
+				flows.add(flow);
+			});
 		}
 		
 		if (!ap.getString(ARG_FLOWS_GV).isBlank()) {
@@ -3330,18 +3367,6 @@ public class ParseCblXref {
 			
 			dprintlnf("Generating %s... Done", gvFile);
 		}
-	}
-	
-	private static final <E, K> void groupBy(final Collection<E> elements,
-			final Function<E, K> key,
-			final Map<K, List<E>> result) {
-		groupBy(elements, key, __ -> new ArrayList<>(), result);
-	}
-	
-	private static final <E, K, C extends Collection<E>> void groupBy(final Iterable<E> elements,
-			final Function<E, K> key, final Function<K, C> grouping,
-			final Map<K, C> result) {
-		elements.forEach(e -> result.computeIfAbsent(key.apply(e), grouping).add(e));
 	}
 	
 	private static final void process(final Path filePath, final List<List<Object>> ops, final List<List<Object>> flows,
@@ -3427,7 +3452,6 @@ public final class ParseSysadata {
 		} else {
 			read(ap.getFile(ARG_IN));
 		}
-		
 	}
 	
 	private static void read(final File file) throws IOException, FileNotFoundException {
@@ -3838,6 +3862,72 @@ public final class ParseSysadata {
 	}
 	
 	/**
+	 * @author 2oLDNncs 20250214
+	 *
+	 * @param <E>
+	 */
+	public static abstract class ListVar_<E> extends AbstractList<E> implements Var {
+		
+		protected final List<E> elements = new ArrayList<>();
+		
+		public final void afterRead() {
+			while (this.newElementNeeded()) {
+				this.elements.add(this.newElement());
+			}
+		}
+		
+		protected abstract boolean newElementNeeded();
+		
+		protected abstract E newElement();
+		
+		@Override
+		public final E get(final int index) {
+			return this.elements.get(index);
+		}
+		
+		@Override
+		public final int size() {
+			return this.elements.size();
+		}
+		
+	}
+	
+	/**
+	 * @author 2oLDNncs 20250214
+	 *
+	 * @param <E>
+	 */
+	public static abstract class ListVar2<E> extends ListVar_<E> {
+		
+		private final IntVar vCount;
+		
+		protected ListVar2(final IntVar vCount) {
+			this.vCount = vCount;
+		}
+		
+		@Override
+		protected boolean newElementNeeded() {
+			return this.elements.size() < this.vCount.get();
+		}
+		
+	}
+	
+	/**
+	 * @author 2oLDNncs 20250214
+	 *
+	 * @param <E>
+	 */
+	public static abstract class ListVar3<E> extends ListVar_<E> {
+		
+		private final IntVar vLength;
+		
+		protected ListVar3(final IntVar vLength) {
+			this.vLength = vLength;
+		}
+		
+	}
+	
+	/**
 	 * @author 2oLDNncs 20250210
 	 */
 	public static abstract interface LongListVar extends ListVar {
@@ -4043,6 +4133,43 @@ public final class ParseSysadata {
 				@Override
 				public final String toString() {
 					return Objects.toString(this.get());
+				}
+				
+			};
+		}
+		
+		protected final <E> ListVar_<E> newListVarV2(final Buffer.Region length, final Supplier<E> newElement) {
+			final var rg = this.getDynamicRegionGenerator();
+			
+			return new ListVar_<>() {
+				
+				private final IntVar vLength = newIntVar(length);
+				
+				private int currentLength;
+				
+				@Override
+				protected final boolean newElementNeeded() {
+					return this.currentLength < this.vLength.get();
+				}
+				
+				@Override
+				protected final E newElement() {
+					final var rgLength = rg.getTotalLength();
+					final var result = newElement.get();
+					this.currentLength += rg.getTotalLength() - rgLength;
+					
+					return result;
+				}
+				
+			};
+		}
+		
+		protected final <E> ListVar_<E> newListVarV(final Buffer.Region count, final Supplier<E> newElement) {
+			return new ListVar2<>(this.newIntVar(count)) {
+				
+				@Override
+				protected final E newElement() {
+					return newElement.get();
 				}
 				
 			};
@@ -7378,17 +7505,64 @@ public final class ParseSysadata {
 		public final StringVar                          vPictureDataString         = this.newStringVarV(PICTURE_DATA_LENGTH_or_ASSIGNMENT_NAME_LENGTH);
 		public final StringVar                          vAssignmentName            = this.vPictureDataString;
 		public final IntListVar                         vIndexIdList               = this.newIntListVarV(INDEX_COUNT);
-		public final LongListVar                        vKeys                      = this.newLongListVarV(KEYS_COUNT);
-//		public final EnumVar<KeySequence>               vKeySequence               = this.newEnumVar(1, KeySequence.decoder);
-//		private final StringVar                         vReserved02                = this.newStringVarF(3);
-//		public final LongVar                            vKeyId                     = this.newLongVar(4);
+//		public final LongListVar                        vKeys                      = this.newLongListVarV(KEYS_COUNT);
+		public final ListVar_<Key>                      vKeys                      = this.newListVarV(KEYS_COUNT, Key::new);
+		
+		public final ListVar_<Pair>                     vPairs                     = new ListVar_<>() {
+			
+			@Override
+			protected boolean newElementNeeded() {
+				// TODO Auto-generated method stub
+				return false;
+			}
+			
+			@Override
+			protected Pair newElement() {
+				return new Pair();
+			}
+			
+		};
+		
 		public final StringVar                          vInitialValueData          = this.newStringVarV(INITIAL_VALUE_LENGTH_or_EXTERNAL_CLASS_NAME_LENGTH);
 		//TODO 4 subfields of vInitialValueData : 1st value length+data, 2nd value length+data
+		
 		public final StringVar                          vExternalClassName         = vInitialValueData;
+		
+		/**
+		 * @author 2oLDNncs 20250214
+		 */
+		public final class Key {
+			
+			public final EnumVar<KeySequence>               vKeySequence               = newEnumVar(1, KeySequence.decoder);
+			private final StringVar                         vReserved02                = newStringVarF(3);
+			public final LongVar                            vKeyId                     = newLongVar(4);
+			
+			{
+				Helpers.ignore(this.vReserved02);
+			}
+			
+		}
+		
+		/**
+		 * @author 2oLDNncs 20250214
+		 */
+		public final class Pair {
+			
+			public final StringVar firstValue  = newStringVarV(newDynamicFixedLengthRegion(2));
+			public final StringVar secondValue = newStringVarV(newDynamicFixedLengthRegion(2));
+			
+		}
 		
 		public RecData_Symbol(final Buffer buffer) {
 			super(buffer);
 //			Helpers.ignore(this.vReserved02);
+		}
+		
+		@Override
+		protected final void afterRead() {
+			this.vKeys.afterRead();
+			this.vPairs.afterRead();
+			super.afterRead();
 		}
 		
 		private static final Buffer.Region.Generator staticRegionGenerator =
