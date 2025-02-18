@@ -3464,7 +3464,6 @@ public final class ParseSysadata {
 		} else {
 			read(ap.getFile(ARG_IN));
 		}
-		
 	}
 	
 	private static void read(final File file) throws IOException, FileNotFoundException {
@@ -3681,50 +3680,6 @@ public final class ParseSysadata {
 		return result;
 	}
 	
-	public static final long unpackDecimal(final byte[] bytes, final int offset, final int length) {
-		long result = 0L;
-		
-		for (int i = offset; i < offset + length; i += 1) {
-			final int packedDecimalByte = Byte.toUnsignedInt(bytes[i]);
-			final int digit1 = checkDecimalDigit(packedDecimalByte / 16);
-			
-			result = result * 10L + digit1;
-			
-			final int digit2 = packedDecimalByte % 16;
-			
-			switch (digit2) {
-			case 0xC:
-			case 0xA:
-			case 0xE:
-			case 0xF:
-				return result;
-			case 0xD:
-			case 0xB:
-				return -result;
-			default:
-				break;
-			}
-			
-			checkDecimalDigit(digit2);
-			
-			result = result * 10L + digit2;
-		}
-		
-		return result;
-	}
-	
-	private static final int checkDecimalDigit(final int value) {
-		if (value < 0) {
-			throw new IllegalArgumentException();
-		}
-		
-		if (9 < value) {
-			throw new IllegalArgumentException();
-		}
-		
-		return value;
-	}
-	
 	public static final boolean testBit(final int flags, final int bitIndex) {
 		return testMask(flags, bitMask(bitIndex));
 	}
@@ -3875,6 +3830,57 @@ public final class ParseSysadata {
 	}
 	
 	/**
+	 * @author 2oLDNncs 20250214
+	 *
+	 * @param <E>
+	 */
+	public static abstract class ListVar_<E> extends AbstractList<E> implements Var {
+		
+		protected final List<E> elements = new ArrayList<>();
+		
+		public final void afterRead() {
+			while (this.newElementNeeded()) {
+				this.elements.add(this.newElement());
+			}
+		}
+		
+		protected abstract boolean newElementNeeded();
+		
+		protected abstract E newElement();
+		
+		@Override
+		public final E get(final int index) {
+			return this.elements.get(index);
+		}
+		
+		@Override
+		public final int size() {
+			return this.elements.size();
+		}
+		
+	}
+	
+	/**
+	 * @author 2oLDNncs 20250214
+	 *
+	 * @param <E>
+	 */
+	public static abstract class ListVar2<E> extends ListVar_<E> {
+		
+		private final IntVar vCount;
+		
+		protected ListVar2(final IntVar vCount) {
+			this.vCount = vCount;
+		}
+		
+		@Override
+		protected boolean newElementNeeded() {
+			return this.elements.size() < this.vCount.get();
+		}
+		
+	}
+	
+	/**
 	 * @author 2oLDNncs 20250210
 	 */
 	public static abstract interface LongListVar extends ListVar {
@@ -3975,6 +3981,10 @@ public final class ParseSysadata {
 			}
 			
 			return this.dynamicRegionGenerator;
+		}
+		
+		protected final Buffer.Region.Generator cloneDynamicRegionGenerator() {
+			return this.getDynamicRegionGenerator().clone();
 		}
 		
 		protected final Buffer.Region newDynamicFixedLengthRegion(final int length) {
@@ -4080,6 +4090,43 @@ public final class ParseSysadata {
 				@Override
 				public final String toString() {
 					return Objects.toString(this.get());
+				}
+				
+			};
+		}
+		
+		protected final <E> ListVar_<E> newListVarV2(final Buffer.Region length, final Supplier<E> newElement) {
+			final Buffer.Region.Generator rg = this.getDynamicRegionGenerator().clone();
+			
+			return new ListVar_<E>() {
+				
+				private final IntVar vLength = newIntVar(length);
+				
+				private int currentLength;
+				
+				@Override
+				protected final boolean newElementNeeded() {
+					return this.currentLength < this.vLength.get();
+				}
+				
+				@Override
+				protected final E newElement() {
+					final int rgLength = rg.getTotalLength();
+					final E result = newElement.get();
+					this.currentLength += rg.getTotalLength() - rgLength;
+					
+					return result;
+				}
+				
+			};
+		}
+		
+		protected final <E> ListVar_<E> newListVarV(final Buffer.Region count, final Supplier<E> newElement) {
+			return new ListVar2<E>(this.newIntVar(count)) {
+				
+				@Override
+				protected final E newElement() {
+					return newElement.get();
 				}
 				
 			};
@@ -4325,9 +4372,50 @@ public final class ParseSysadata {
 	}
 	
 	/**
+	 * @author 2oLDNncs 20250217
+	 */
+	public static final class ModClock {
+		
+		private final long[] sharedClock;
+		
+		private long localClock = -1;
+		
+		private ModClock(final long[] sharedClock) {
+			this.sharedClock = sharedClock;
+		}
+		
+		public ModClock() {
+			this(new long[1]);
+		}
+		
+		public final void incrShared() {
+			++this.sharedClock[0];
+		}
+		
+		public final boolean syncLocal() {
+			final long c = this.sharedClock[0];
+			
+			if (this.localClock < c) {
+				this.localClock = c;
+				
+				return true;
+			}
+			
+			return false;
+		}
+		
+		public final ModClock spawn() {
+			return new ModClock(this.sharedClock);
+		}
+		
+	}
+	
+	/**
 	 * @author 2oLDNncs 20250206
 	 */
 	public static final class Buffer {
+		
+		private final ModClock modClock = new ModClock();
 		
 		private byte[] bytes;
 		
@@ -4338,6 +4426,10 @@ public final class ParseSysadata {
 		public Buffer(final int length, final boolean littleEndian) {
 			this.bytes = new byte[length];
 			this.littleEndian = littleEndian;
+		}
+		
+		public final ModClock spawnModClock() {
+			return this.modClock.spawn();
 		}
 		
 		public final boolean isLittleEndian() {
@@ -4383,6 +4475,12 @@ public final class ParseSysadata {
 				
 				System.arraycopy(valueBytes, 0, this.bytes, regionOffset, newLength);
 			}
+			
+			this.incrModClock();
+		}
+		
+		private final void incrModClock() {
+			this.modClock.incrShared();
 		}
 		
 		private final void removeBytes(final int offset, final int length) {
@@ -4392,6 +4490,7 @@ public final class ParseSysadata {
 			System.arraycopy(this.bytes, offset + length, newBytes, offset, newBytes.length - offset);
 			
 			this.bytes = newBytes;
+			this.incrModClock();
 		}
 		
 		private final void insertBytes(final int offset, final int length) {
@@ -4405,6 +4504,7 @@ public final class ParseSysadata {
 			System.arraycopy(this.bytes, offset, newBytes, offset + length, bytes.length - offset);
 			
 			this.bytes = newBytes;
+			this.incrModClock();
 		}
 		
 		public final String getStr(final int offset, final int length) {
@@ -4424,16 +4524,16 @@ public final class ParseSysadata {
 		}
 		
 		public final void setNum(final Region region, final long value) {
-			this.setNum(region.getOffset(), region.getLength(), value, region.isPackedDecimal());
+			this.setNum(region.getOffset(), region.getLength(), value, region.isTextDecimal());
 		}
 		
 		public final void setNum(final int offset, final int length, final long value) {
 			this.setNum(offset, length, value, false);
 		}
 		
-		public final void setNum(final int offset, final int length, final long value, final boolean packedDecimal) {
-			if (packedDecimal) {
-				throw new UnsupportedOperationException("TODO");
+		public final void setNum(final int offset, final int length, final long value, final boolean textDecimal) {
+			if (textDecimal) {
+				throw new UnsupportedOperationException("TODO"); // TODO
 			}
 			
 			if (this.isLittleEndian()) {
@@ -4445,11 +4545,13 @@ public final class ParseSysadata {
 					this.bytes[offset + i] = (byte) (value >> (8 * (length - 1 - i)));
 				}
 			}
+			
+			this.incrModClock();
 		}
 		
-		public final long getNum(final int offset, final int length, final boolean packedDecimal) {
-			if (packedDecimal) {
-				return unpackDecimal(bytes, offset, length);
+		public final long getNum(final int offset, final int length, final boolean textDecimal) {
+			if (textDecimal) {
+				return Long.parseLong(this.getStr(offset, length));
 			}
 			
 			return num(this.bytes, offset, length, this.isLittleEndian());
@@ -4460,7 +4562,7 @@ public final class ParseSysadata {
 		}
 		
 		public final long getNum(final Region region) {
-			return this.getNum(region.getOffset(), region.getLength(), region.isPackedDecimal());
+			return this.getNum(region.getOffset(), region.getLength(), region.isTextDecimal());
 		}
 		
 		public final int getInt(final Region region) {
@@ -4474,6 +4576,7 @@ public final class ParseSysadata {
 		public final void read(final ReadingContext rc) throws IOException {
 			Helpers.dprintlnf("Reading %s bytes", this.bytes.length);
 			rc.read(this.bytes);
+			this.incrModClock();
 		}
 		
 		public final void write(final OutputStream out) throws IOException {
@@ -4499,6 +4602,13 @@ public final class ParseSysadata {
 			Region(final Offset offset, final Length length) {
 				this.offset = offset;
 				this.length = length;
+			}
+			public final ModClock spawnModClock() {
+				if (this.offset instanceof RelativeOffset) {
+					return ((RelativeOffset) this.offset).spawnModClock();
+				}
+				
+				return ((VariableLength) this.length).spawnModClock();
 			}
 			
 			public final boolean isAbsoluteOffset() {
@@ -4535,10 +4645,6 @@ public final class ParseSysadata {
 				return this;
 			}
 			
-			public final boolean isPackedDecimal() {
-				return NumberFormat.PACKED_DECIMAL.equals(this.getNumberFormat());
-			}
-			
 			public final boolean isTextDecimal() {
 				return NumberFormat.TEXT_DECIMAL.equals(this.getNumberFormat());
 			}
@@ -4548,7 +4654,7 @@ public final class ParseSysadata {
 			 */
 			public static enum NumberFormat {
 				
-				BINARY, PACKED_DECIMAL, TEXT_DECIMAL;
+				BINARY, TEXT_DECIMAL;
 				
 			}
 			
@@ -4660,13 +4766,26 @@ public final class ParseSysadata {
 			 */
 			private static final class RelativeOffset extends Reference implements Offset {
 				
+				private final ModClock modClock;
+				
+				private int cachedValue;
+				
 				RelativeOffset(final Region previous) {
 					super(previous);
+					this.modClock = previous.spawnModClock();
+				}
+				
+				public final ModClock spawnModClock() {
+					return this.modClock.spawn();
 				}
 				
 				@Override
 				public final int getAsInt() {
-					return this.target.getNextOffset();
+					if (this.modClock.syncLocal()) {
+						this.cachedValue = this.target.getNextOffset();
+					}
+					
+					return this.cachedValue;
 				}
 				
 			}
@@ -4698,10 +4817,19 @@ public final class ParseSysadata {
 				
 				private final int elementLength;
 				
+				private final ModClock modClock;
+				
+				private int cachedValue;
+				
 				VariableLength(final Region elementCount, final int elementLength, final Buffer buffer) {
 					super(elementCount);
 					this.buffer = buffer;
 					this.elementLength = elementLength;
+					this.modClock = buffer.spawnModClock();
+				}
+				
+				public final ModClock spawnModClock() {
+					return this.modClock.spawn();
 				}
 				
 				public final void setValue(final int elementCount) {
@@ -4710,7 +4838,11 @@ public final class ParseSysadata {
 				
 				@Override
 				public final int getAsInt() {
-					return this.buffer.getInt(this.target) * this.elementLength;
+					if (this.modClock.syncLocal()) {
+						this.cachedValue = this.buffer.getInt(this.target) * this.elementLength;
+					}
+					
+					return this.cachedValue;
 				}
 				
 			}
@@ -7415,17 +7547,48 @@ public final class ParseSysadata {
 		public final StringVar                          vPictureDataString         = this.newStringVarV(PICTURE_DATA_LENGTH_or_ASSIGNMENT_NAME_LENGTH);
 		public final StringVar                          vAssignmentName            = this.vPictureDataString;
 		public final IntListVar                         vIndexIdList               = this.newIntListVarV(INDEX_COUNT);
-		public final LongListVar                        vKeys                      = this.newLongListVarV(KEYS_COUNT);
-//		public final EnumVar<KeySequence>               vKeySequence               = this.newEnumVar(1, KeySequence.decoder);
-//		private final StringVar                         vReserved02                = this.newStringVarF(3);
-//		public final LongVar                            vKeyId                     = this.newLongVar(4);
-		public final StringVar                          vInitialValueData          = this.newStringVarV(INITIAL_VALUE_LENGTH_or_EXTERNAL_CLASS_NAME_LENGTH);
-		//TODO 4 subfields of vInitialValueData : 1st value length+data, 2nd value length+data
-		public final StringVar                          vExternalClassName         = vInitialValueData;
+//		public final LongListVar                        vKeys                      = this.newLongListVarV(KEYS_COUNT);
+		public final ListVar_<Key>                      vKeys                      = this.newListVarV(KEYS_COUNT, Key::new);
+		
+//		public final StringVar                          vInitialValueData          = this.newStringVarV(INITIAL_VALUE_LENGTH);
+		public final ListVar_<Pair>                     vPairs                     = newListVarV2(INITIAL_VALUE_LENGTH, Pair::new);
+		
+		public final StringVar                          vExternalClassName         = this.newStringVarV(EXTERNAL_CLASS_NAME_LENGTH);;
 		
 		public RecData_Symbol(final Buffer buffer) {
 			super(buffer);
-//			Helpers.ignore(this.vReserved02);
+		}
+		
+		@Override
+		protected final void afterRead() {
+			this.vKeys.afterRead();
+			this.vPairs.afterRead();
+			super.afterRead();
+		}
+		
+		/**
+		 * @author 2oLDNncs 20250214
+		 */
+		public final class Key {
+			
+			public final EnumVar<KeySequence>           vKeySequence               = newEnumVar(1, KeySequence.decoder);
+			private final StringVar                     vReserved02                = newStringVarF(3);
+			public final LongVar                        vKeyId                     = newLongVar(4);
+			
+			{
+				Helpers.ignore(this.vReserved02);
+			}
+			
+		}
+		
+		/**
+		 * @author 2oLDNncs 20250214
+		 */
+		public final class Pair {
+			
+			public final StringVar firstValue  = newStringVarV(newDynamicFixedLengthRegion(2));
+			public final StringVar secondValue = newStringVarV(newDynamicFixedLengthRegion(2));
+			
 		}
 		
 		private static final Buffer.Region.Generator staticRegionGenerator =
@@ -7472,7 +7635,8 @@ public final class ParseSysadata {
 		private static final Buffer.Region VALUE_PAIRS_COUNT                                  = staticRegionGenerator.newFixedLength(2);
 		private static final Buffer.Region SYMBOL_NAME_LENGTH                                 = staticRegionGenerator.newFixedLength(2);
 		private static final Buffer.Region PICTURE_DATA_LENGTH_or_ASSIGNMENT_NAME_LENGTH      = staticRegionGenerator.newFixedLength(2);
-		private static final Buffer.Region INITIAL_VALUE_LENGTH_or_EXTERNAL_CLASS_NAME_LENGTH = staticRegionGenerator.newFixedLength(2);
+		private static final Buffer.Region INITIAL_VALUE_LENGTH                               = staticRegionGenerator.newFixedLength(2);
+		private static final Buffer.Region EXTERNAL_CLASS_NAME_LENGTH                         = INITIAL_VALUE_LENGTH;
 		private static final Buffer.Region ODO_SYMBOL_NAME_ID_or_ASSIGN_DATA_NAME_ID          = staticRegionGenerator.newFixedLength(4);
 		private static final Buffer.Region KEYS_COUNT                                         = staticRegionGenerator.newFixedLength(2);
 		private static final Buffer.Region INDEX_COUNT                                        = staticRegionGenerator.newFixedLength(2);
